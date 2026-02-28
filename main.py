@@ -37,6 +37,11 @@ FOCUS_ROUTE = ("BSB", "REC")
 # ViajaNet detecta headless e retorna página vazia; usar headed para carregar o Angular
 HEADLESS = False
 
+# Só refazer rotas cuja última coleta foi há mais de 6 horas (exige coluna de timestamp em flight_prices_raw)
+MIN_HOURS_SINCE_LAST_SCRAPE = 6
+# Nome da coluna de data/hora em flight_prices_raw (ex.: "inserted_at", "scraped_at"). None = desativa o filtro de 6h
+FLIGHT_PRICES_RAW_TIMESTAMP_COLUMN: Optional[str] = "scraped_at"
+
 
 PT_MONTHS = {
     "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
@@ -66,23 +71,49 @@ ROUTE_SOURCE_STATUS_IGNORE = ("not_found", "invalid", "error", "unavailable")
 # DB HELPERS
 # ==========================
 def get_routes(limit: Optional[int] = None) -> List[Tuple[str, str]]:
-    """Retorna rotas da tabela routes que não estão marcadas para ignorar em route_source_status.
-    route_source_status: source, origin, destination, status, reason, last_checked, next_retry_at
+    """Retorna rotas que não estão em route_source_status como ignoradas.
+    Se FLIGHT_PRICES_RAW_TIMESTAMP_COLUMN estiver definido, só inclui rotas nunca scrapadas
+    ou cuja última coleta foi há mais de MIN_HOURS_SINCE_LAST_SCRAPE horas.
     """
     effective_limit = limit if limit is not None else MAX_ROUTES_PER_RUN
+    use_time_filter = FLIGHT_PRICES_RAW_TIMESTAMP_COLUMN and MIN_HOURS_SINCE_LAST_SCRAPE > 0
     conn = psycopg2.connect(**DB_CONFIG)
     try:
         with conn.cursor() as cur:
-            sql = """
-                SELECT r.origin, r.destination
-                FROM routes r
-                LEFT JOIN route_source_status rss
-                  ON rss.origin = r.origin AND rss.destination = r.destination AND rss.source = %s
-                WHERE (rss.origin IS NULL OR rss.status IS NULL
-                       OR rss.status NOT IN %s)
-                ORDER BY r.id
-                """
-            params: tuple = (SOURCE_NAME, ROUTE_SOURCE_STATUS_IGNORE)
+            if use_time_filter:
+                ts_col = FLIGHT_PRICES_RAW_TIMESTAMP_COLUMN
+                sql = f"""
+                    SELECT r.origin, r.destination
+                    FROM routes r
+                    LEFT JOIN route_source_status rss
+                      ON rss.origin = r.origin AND rss.destination = r.destination AND rss.source = %s
+                    LEFT JOIN (
+                        SELECT fp.origin, fp.destination, fp.source, MAX(fp.{ts_col}) AS last_scrape
+                        FROM flight_prices_raw fp
+                        WHERE fp.source = %s
+                        GROUP BY fp.origin, fp.destination, fp.source
+                    ) last ON last.origin = r.origin AND last.destination = r.destination AND last.source = %s
+                    WHERE (rss.origin IS NULL OR rss.status IS NULL OR rss.status NOT IN %s)
+                      AND (last.last_scrape IS NULL OR last.last_scrape < now() - (%s * interval '1 hour'))
+                    ORDER BY r.id
+                    """
+                params = (
+                    SOURCE_NAME,
+                    SOURCE_NAME,
+                    SOURCE_NAME,
+                    ROUTE_SOURCE_STATUS_IGNORE,
+                    MIN_HOURS_SINCE_LAST_SCRAPE,
+                )
+            else:
+                sql = """
+                    SELECT r.origin, r.destination
+                    FROM routes r
+                    LEFT JOIN route_source_status rss
+                      ON rss.origin = r.origin AND rss.destination = r.destination AND rss.source = %s
+                    WHERE (rss.origin IS NULL OR rss.status IS NULL OR rss.status NOT IN %s)
+                    ORDER BY r.id
+                    """
+                params = (SOURCE_NAME, ROUTE_SOURCE_STATUS_IGNORE)
             if effective_limit is not None:
                 sql += " LIMIT %s"
                 params = params + (effective_limit,)
