@@ -152,34 +152,20 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     except Exception:
         pass
 
-    # Em algumas rotas o className do preço muda; espera por cards ou por qualquer
-    # variante conhecida de preço para evitar falso negativo.
+    # Em algumas rotas o className do preço muda e o carregamento é irregular.
+    # Espera por qualquer marcador válido de resultado.
+    ready_selector = ", ".join([
+        "user-favorite-card",
+        "favorite-card-flight-itinerary",
+        *PRICE_SELECTORS,
+    ])
+
     try:
-        await page.wait_for_function(
-            """
-            (selectors) => {
-                const hasCards = document.querySelectorAll('favorite-card-flight-itinerary').length > 0;
-                const hasPrice = selectors.some((s) => document.querySelector(s));
-                return hasCards || hasPrice;
-            }
-            """,
-            arg=PRICE_SELECTORS,
-            timeout=60000,
-        )
+        await page.wait_for_selector(ready_selector, state="attached", timeout=60000)
     except PlaywrightTimeoutError:
         # Viajanet eventualmente carrega estado incompleto; um reload costuma resolver.
         await page.reload(wait_until="domcontentloaded")
-        await page.wait_for_function(
-            """
-            (selectors) => {
-                const hasCards = document.querySelectorAll('favorite-card-flight-itinerary').length > 0;
-                const hasPrice = selectors.some((s) => document.querySelector(s));
-                return hasCards || hasPrice;
-            }
-            """,
-            arg=PRICE_SELECTORS,
-            timeout=30000,
-        )
+        await page.wait_for_selector(ready_selector, state="attached", timeout=30000)
 
     itineraries = await page.query_selector_all("favorite-card-flight-itinerary")
     if not itineraries:
