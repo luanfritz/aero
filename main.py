@@ -13,6 +13,8 @@ from opportunities_engine import generate_opportunities
 
 from opportunities_engine import generate_opportunities
 
+from opportunities_engine import generate_opportunities
+
 
 # ==========================
 # CONFIG
@@ -39,7 +41,7 @@ FOCUS_ROUTE_ONLY = True
 FOCUS_ROUTE = ("BSB", "REC")
 NAVIGATION_ATTEMPTS = 3
 ROUTE_SOURCE_STATUS_IGNORE = ("INACTIVE", "BLOCKED")
-
+BROWSER_HEADLESS = False  # False abre navegador visível para depuração
 
 
 PT_MONTHS = {
@@ -529,7 +531,7 @@ async def run_batch():
             return
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(headless=BROWSER_HEADLESS)
         context = await browser.new_context(
             locale="pt-BR",
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
