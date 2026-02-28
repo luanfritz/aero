@@ -11,6 +11,8 @@ from playwright.async_api import async_playwright, Page, TimeoutError as Playwri
 
 from opportunities_engine import generate_opportunities
 
+from opportunities_engine import generate_opportunities
+
 
 # ==========================
 # CONFIG
@@ -33,14 +35,10 @@ DELAY_MS_BETWEEN_ROUTES = (2500, 6000)  # pausa aleatória (min, max)
 ROUTE_TIMEOUT_S = 120  # evita travamento em rota problemática
 
 # Debug temporário: focar em uma rota até estabilizar o scraper
-FOCUS_ROUTE_ONLY = False
+FOCUS_ROUTE_ONLY = True
 FOCUS_ROUTE = ("BSB", "REC")
-# Só incluir rotas que nunca foram scrapadas ou cuja última coleta foi há mais de 6 horas
-MIN_HOURS_SINCE_LAST_SCRAPE = 6
 NAVIGATION_ATTEMPTS = 3
-
-# ViajaNet retorna página vazia em headless; usar False para abrir o navegador
-HEADLESS = False
+ROUTE_SOURCE_STATUS_IGNORE = ("INACTIVE", "BLOCKED")
 
 
 
@@ -59,12 +57,7 @@ PRICE_SELECTORS = [
 # ==========================
 # DB HELPERS
 # ==========================
-def get_routes(limit: Optional[int] = None) -> List[Tuple[str, str]]:
-    """Retorna rotas da tabela routes que:
-    - não estão marcadas para ignorar em route_source_status;
-    - nunca foram scrapadas ou a última coleta foi há mais de MIN_HOURS_SINCE_LAST_SCRAPE horas.
-    """
-    effective_limit = limit if limit is not None else MAX_ROUTES_PER_RUN
+def has_column(table_name: str, column_name: str) -> bool:
     conn = psycopg2.connect(**DB_CONFIG)
     try:
         with conn.cursor() as cur:
@@ -106,13 +99,46 @@ def upsert_route_source_status(origin: str, destination: str, status: str, reaso
         with conn, conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO route_source_status (source, origin, destination, status, reason, last_checked)
-                VALUES (%s, %s, %s, %s, %s, now())
-                ON CONFLICT (source, origin, destination)
-                DO UPDATE SET status = EXCLUDED.status, reason = EXCLUDED.reason, last_checked = now()
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = %s
+                  AND column_name = %s
+                LIMIT 1
                 """,
-                (SOURCE_NAME, origin, destination, status, reason),
+                (table_name, column_name),
             )
+            return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+
+def get_routes(limit: int = MAX_ROUTES_PER_RUN) -> List[Tuple[str, str]]:
+    conn = psycopg2.connect(**DB_CONFIG)
+    try:
+        with conn.cursor() as cur:
+            if has_column("routes", "source_status"):
+                cur.execute(
+                    """
+                    SELECT origin, destination
+                    FROM routes
+                    WHERE COALESCE(source_status, '') <> ALL(%s)
+                    ORDER BY id
+                    LIMIT %s
+                    """,
+                    (list(ROUTE_SOURCE_STATUS_IGNORE), limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT origin, destination
+                    FROM routes
+                    ORDER BY id
+                    LIMIT %s
+                    """,
+                    (limit,)
+                )
+            return cur.fetchall()
     finally:
         conn.close()
 
@@ -503,17 +529,11 @@ async def run_batch():
             return
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=HEADLESS,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-        )
+        browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             locale="pt-BR",
-            viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            java_script_enabled=True,
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         )
-        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = await context.new_page()
         page.set_default_timeout(30000)
 
@@ -540,26 +560,5 @@ async def run_batch():
     opportunities = generate_opportunities()
     print(f"🚨 Oportunidades novas geradas: {opportunities}")
 
-
-def choose_execution_mode() -> str:
-    print("\nEscolha o modo de execução:")
-    print("1) Scraping + motor de oportunidades")
-    print("2) Apenas motor de oportunidades")
-
-    try:
-        choice = input("Digite 1 ou 2 (padrão 1): ").strip()
-    except EOFError:
-        return "scraping"
-
-    if choice == "2":
-        return "opportunities"
-    return "scraping"
-
-
 if __name__ == "__main__":
-    mode = choose_execution_mode()
-    if mode == "opportunities":
-        total = generate_opportunities()
-        print(f"🚨 Oportunidades novas geradas: {total}")
-    else:
-        asyncio.run(run_batch())
+    asyncio.run(run_batch())
