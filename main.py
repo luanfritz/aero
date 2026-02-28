@@ -33,7 +33,6 @@ ROUTE_TIMEOUT_S = 120  # evita travamento em rota problemática
 # Debug temporário: focar em uma rota até estabilizar o scraper
 FOCUS_ROUTE_ONLY = True
 FOCUS_ROUTE = ("BSB", "REC")
-MIN_HTML_LEN_FOR_VALID_PAGE = 4000
 
 
 PT_MONTHS = {
@@ -256,6 +255,14 @@ def is_home_redirect(url: str) -> bool:
     return host.endswith("viajanet.com.br") and path == ""
 
 
+def is_valid_route_url(url: str, origin: str, destination: str) -> bool:
+    parsed = urlparse(url or "")
+    host = parsed.netloc.lower()
+    path = (parsed.path or "").lower()
+    expected_prefix = f"/passagens-aereas/{origin.lower()}/{destination.lower()}"
+    return host.endswith("viajanet.com.br") and path.startswith(expected_prefix)
+
+
 # ==========================
 # SCRAPER CORE
 # ==========================
@@ -272,26 +279,24 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     valid_navigation = False
 
     for candidate_url in urls:
-        await page.goto(candidate_url, wait_until="load")
-        await page.wait_for_timeout(1500)
+        await page.goto(candidate_url, wait_until="domcontentloaded")
+        await page.wait_for_timeout(3000)
 
         current_url = page.url
-        html_len = len(await page.content())
-
         if is_home_redirect(current_url):
             print(f"⚠️ Redirect para home em {candidate_url}: {current_url}")
             continue
 
-        if html_len < MIN_HTML_LEN_FOR_VALID_PAGE:
-            print(f"⚠️ HTML curto ({html_len}) em {candidate_url}, tentando variante...")
-            continue
+        if is_valid_route_url(current_url, origin_hint, destination_hint):
+            url = current_url
+            valid_navigation = True
+            break
 
-        url = candidate_url
-        valid_navigation = True
-        break
+        html_len = len(await page.content())
+        print(f"⚠️ URL inesperada ({current_url}) / HTML {html_len} em {candidate_url}, tentando variante...")
 
     if not valid_navigation:
-        print("⚠️ Não foi possível carregar página válida da rota (home/HTML curto).")
+        print("⚠️ Não foi possível carregar página válida da rota (home/URL inesperada).")
         return 0
     # Alguns cenários abrem banner/overlay que atrapalha a renderização dos cards.
     # Tentamos fechar de forma defensiva sem quebrar a execução.
