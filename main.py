@@ -3,6 +3,7 @@ import json
 import random
 import re
 from datetime import date
+from urllib.parse import urlparse
 from typing import Optional, Tuple, List
 
 import psycopg2
@@ -181,6 +182,13 @@ def extract_offers_from_html(html: str):
     return offers
 
 
+def is_home_redirect(url: str) -> bool:
+    parsed = urlparse(url or "")
+    host = parsed.netloc.lower()
+    path = (parsed.path or "/").rstrip("/")
+    return host.endswith("viajanet.com.br") and path == ""
+
+
 # ==========================
 # SCRAPER CORE
 # ==========================
@@ -194,6 +202,11 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     print(f"URL: {url}")
 
     await page.goto(url, wait_until="domcontentloaded")
+
+    current_url = page.url
+    if is_home_redirect(current_url):
+        print(f"⚠️ Rota inexistente (redirect para home): {current_url}")
+        return 0
 
     # Alguns cenários abrem banner/overlay que atrapalha a renderização dos cards.
     # Tentamos fechar de forma defensiva sem quebrar a execução.
