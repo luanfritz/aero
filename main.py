@@ -18,6 +18,7 @@ DB_CONFIG = {
     "dbname": "postgres",
     "user": "postgres",
     "password": "290535",
+
 }
 
 SOURCE_NAME = "viajanet"
