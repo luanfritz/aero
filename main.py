@@ -163,7 +163,7 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
                 return hasCards || hasPrice;
             }
             """,
-            PRICE_SELECTORS,
+            arg=PRICE_SELECTORS,
             timeout=60000,
         )
     except PlaywrightTimeoutError:
@@ -177,7 +177,7 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
                 return hasCards || hasPrice;
             }
             """,
-            PRICE_SELECTORS,
+            arg=PRICE_SELECTORS,
             timeout=30000,
         )
 
