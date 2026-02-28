@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from typing import Optional, Tuple, List
 
 import psycopg2
-from playwright.async_api import async_playwright, Page
+from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeoutError
 
 from opportunities_engine import generate_opportunities
 
@@ -27,7 +27,7 @@ DB_CONFIG = {
 SOURCE_NAME = "viajanet"
 CURRENCY = "BRL"
 
-MAX_ROUTES_PER_RUN = 10          # quantas rotas você quer por execução
+MAX_ROUTES_PER_RUN = None        # None = todas as rotas elegíveis do DB
 MAX_OFFERS_PER_ROUTE = 25        # limita quantos cards por rota (pra não demorar demais)
 DELAY_MS_BETWEEN_ROUTES = (2500, 6000)  # pausa aleatória (min, max)
 ROUTE_TIMEOUT_S = 120  # evita travamento em rota problemática
@@ -54,20 +54,47 @@ PRICE_SELECTORS = [
 # ==========================
 # DB HELPERS
 # ==========================
-def get_routes(limit: int = MAX_ROUTES_PER_RUN) -> List[Tuple[str, str]]:
+def get_routes(limit: Optional[int] = None) -> List[Tuple[str, str]]:
+    """Retorna rotas da tabela routes que não estão marcadas para ignorar em route_source_status.
+    route_source_status: source, origin, destination, status, reason, last_checked, next_retry_at
+    """
+    effective_limit = limit if limit is not None else MAX_ROUTES_PER_RUN
     conn = psycopg2.connect(**DB_CONFIG)
     try:
         with conn.cursor() as cur:
+            sql = """
+                SELECT r.origin, r.destination
+                FROM routes r
+                LEFT JOIN route_source_status rss
+                  ON rss.origin = r.origin AND rss.destination = r.destination AND rss.source = %s
+                WHERE (rss.origin IS NULL OR rss.status IS NULL
+                       OR rss.status NOT IN %s)
+                ORDER BY r.id
+                """
+            params: tuple = (SOURCE_NAME, ROUTE_SOURCE_STATUS_IGNORE)
+            if effective_limit is not None:
+                sql += " LIMIT %s"
+                params = params + (effective_limit,)
+            cur.execute(sql, params)
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def upsert_route_source_status(origin: str, destination: str, status: str, reason: Optional[str] = None) -> None:
+    """Registra rota em route_source_status quando não existe na fonte (ex: redirect para home)."""
+    conn = psycopg2.connect(**DB_CONFIG)
+    try:
+        with conn, conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT origin, destination
-                FROM routes
-                ORDER BY id
-                LIMIT %s
+                INSERT INTO route_source_status (source, origin, destination, status, reason, last_checked)
+                VALUES (%s, %s, %s, %s, %s, now())
+                ON CONFLICT (source, origin, destination)
+                DO UPDATE SET status = EXCLUDED.status, reason = EXCLUDED.reason, last_checked = now()
                 """,
-                (limit,)
+                (SOURCE_NAME, origin, destination, status, reason),
             )
-            return cur.fetchall()
     finally:
         conn.close()
 
@@ -386,8 +413,10 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
         if not it:
             continue
 
-        # O que funcionou contigo: subir para um container que enxerga o pricebox
-        container = await it.evaluate_handle("el => el.parentElement.parentElement")
+        # ViajaNet: flights-card é o container raiz; subir até ele para ver itinerary + pricebox
+        container = await it.evaluate_handle(
+            "el => el.closest && el.closest('flights-card') || el.parentElement?.parentElement?.parentElement || el.parentElement?.parentElement || el"
+        )
 
         airline_el = await container.query_selector(".airline-name")
         airline = (await airline_el.inner_text()).strip() if airline_el else None
