@@ -3,6 +3,7 @@ import json
 import random
 import re
 from datetime import date
+from urllib.parse import urlparse
 from typing import Optional, Tuple, List
 
 import psycopg2
@@ -27,12 +28,19 @@ CURRENCY = "BRL"
 MAX_ROUTES_PER_RUN = 10          # quantas rotas você quer por execução
 MAX_OFFERS_PER_ROUTE = 25        # limita quantos cards por rota (pra não demorar demais)
 DELAY_MS_BETWEEN_ROUTES = (2500, 6000)  # pausa aleatória (min, max)
+ROUTE_TIMEOUT_S = 120  # evita travamento em rota problemática
 
 
 PT_MONTHS = {
     "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
     "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12
 }
+
+PRICE_SELECTORS = [
+    ".favorite-card-pricebox-price-amount",
+    ".pricebox-price-amount",
+    "[class*='pricebox-price-amount']",
+]
 
 
 # ==========================
@@ -123,6 +131,64 @@ def parse_ptbr_date(text: str) -> Optional[date]:
     return date(year, mon, day)
 
 
+
+
+async def wait_for_results(page: Page, timeout_ms: int) -> bool:
+    elapsed = 0
+    interval = 2000
+
+    while elapsed < timeout_ms:
+        itineraries = await page.query_selector_all("favorite-card-flight-itinerary")
+        if itineraries:
+            return True
+
+        for selector in PRICE_SELECTORS:
+            if await page.query_selector(selector):
+                return True
+
+        if elapsed > 0 and elapsed % 10000 == 0:
+            print(f"⏳ Aguardando resultados... {elapsed // 1000}s")
+
+        # Ajuda quando a página só renderiza cards após interações/scroll.
+        try:
+            await page.evaluate("window.scrollBy(0, 1200)")
+        except Exception:
+            pass
+
+        await page.wait_for_timeout(interval)
+        elapsed += interval
+
+    return False
+
+
+def extract_offers_from_html(html: str):
+    """
+    Fallback simples quando os web-components não são materializados no query_selector_all.
+    """
+    offers = []
+    cards = re.findall(r"<user-favorite-card[\s\S]*?</user-favorite-card>", html or "", flags=re.I)
+    for card in cards:
+        route_m = re.search(r'class="route-from-to"[^>]*>\s*([A-Z]{3}\s*-\s*[A-Z]{3})\s*<', card)
+        date_m = re.search(r'class="date"[^>]*>\s*([^<]+)\s*<', card)
+        price_m = re.search(r'class="(?:favorite-card-pricebox-price-amount|offer-card-pricebox-price-amount|pricebox-price-amount)"[^>]*>\s*([\d\.,]+)\s*<', card)
+
+        route_text = route_m.group(1).strip() if route_m else ""
+        date_text = date_m.group(1).strip() if date_m else ""
+        price_text = price_m.group(1).strip() if price_m else ""
+
+        if route_text and date_text and price_text:
+            offers.append((route_text, date_text, price_text))
+
+    return offers
+
+
+def is_home_redirect(url: str) -> bool:
+    parsed = urlparse(url or "")
+    host = parsed.netloc.lower()
+    path = (parsed.path or "/").rstrip("/")
+    return host.endswith("viajanet.com.br") and path == ""
+
+
 # ==========================
 # SCRAPER CORE
 # ==========================
@@ -137,13 +203,64 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
 
     await page.goto(url, wait_until="domcontentloaded")
 
-    # não usar networkidle aqui; esperar pelo preço
-    await page.wait_for_selector(".favorite-card-pricebox-price-amount", timeout=60000)
+    current_url = page.url
+    if is_home_redirect(current_url):
+        print(f"⚠️ Rota inexistente (redirect para home): {current_url}")
+        return 0
+
+    # Alguns cenários abrem banner/overlay que atrapalha a renderização dos cards.
+    # Tentamos fechar de forma defensiva sem quebrar a execução.
+    close_button = page.get_by_role("button", name=re.compile(r"aceitar|entendi|fechar", re.I)).first
+    try:
+        if await close_button.is_visible(timeout=2500):
+            await close_button.click()
+    except Exception:
+        pass
+
+    # Em algumas rotas o className do preço muda e o carregamento é irregular.
+    # Faz polling por cards/preço e tenta um reload quando necessário.
+    has_results = await wait_for_results(page, timeout_ms=60000)
+    if not has_results:
+        # Viajanet eventualmente carrega estado incompleto; um reload costuma resolver.
+        await page.reload(wait_until="domcontentloaded")
+        has_results = await wait_for_results(page, timeout_ms=30000)
+
+    if not has_results:
+        print("⚠️ Timeout aguardando cards/preço; seguindo para checagem final do DOM.")
 
     itineraries = await page.query_selector_all("favorite-card-flight-itinerary")
     if not itineraries:
-        print("⚠️ Nenhum card encontrado.")
-        return 0
+        # fallback por HTML bruto (algumas execuções não materializam os custom elements no query_selector_all)
+        html = await page.content()
+        fallback_offers = extract_offers_from_html(html)
+        if not fallback_offers:
+            print("⚠️ Nenhum card encontrado.")
+            return 0
+
+        saved = 0
+        for route_out, date_out_text, price_text in fallback_offers[:MAX_OFFERS_PER_ROUTE]:
+            origin, destination = parse_route(route_out)
+            dep_date = parse_ptbr_date(date_out_text)
+            price_brl = parse_price_to_int(price_text)
+            if not origin or not destination or not dep_date or price_brl <= 0:
+                continue
+
+            payload = {
+                "airline": None,
+                "route_out": route_out,
+                "date_out_text": date_out_text,
+                "return_date_text": None,
+                "price_text": price_text,
+                "url": url,
+                "origin_hint": origin_hint,
+                "destination_hint": destination_hint,
+                "extraction_mode": "html_fallback",
+            }
+            insert_raw(origin, destination, dep_date, None, price_brl, payload)
+            saved += 1
+
+        print(f"✅ Salvos via fallback HTML para {origin_hint}->{destination_hint}: {saved}")
+        return saved
 
     total = min(len(itineraries), MAX_OFFERS_PER_ROUTE)
     print(f"Encontrados {len(itineraries)} cards (processando {total})")
@@ -162,7 +279,11 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
         route_els = await container.query_selector_all(".route-from-to")
         date_els = await container.query_selector_all(".date")
 
-        price_el = await container.query_selector(".favorite-card-pricebox-price-amount")
+        price_el = None
+        for selector in PRICE_SELECTORS:
+            price_el = await container.query_selector(selector)
+            if price_el:
+                break
         if not price_el:
             continue
 
@@ -218,12 +339,18 @@ async def run_batch():
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context()
         page = await context.new_page()
+        page.set_default_timeout(30000)
 
         total_saved = 0
 
         for (origin, destination) in routes:
             try:
-                total_saved += await scrape_route(page, origin, destination)
+                total_saved += await asyncio.wait_for(
+                    scrape_route(page, origin, destination),
+                    timeout=ROUTE_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                print(f"❌ Timeout geral na rota {origin}->{destination} após {ROUTE_TIMEOUT_S}s")
             except Exception as e:
                 print(f"❌ Erro em {origin}->{destination}: {e}")
 
