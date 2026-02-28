@@ -25,14 +25,17 @@ DB_CONFIG = {
 SOURCE_NAME = "viajanet"
 CURRENCY = "BRL"
 
-MAX_ROUTES_PER_RUN = 10          # quantas rotas você quer por execução
+MAX_ROUTES_PER_RUN = None        # None = todas as rotas elegíveis do DB
 MAX_OFFERS_PER_ROUTE = 25        # limita quantos cards por rota (pra não demorar demais)
 DELAY_MS_BETWEEN_ROUTES = (2500, 6000)  # pausa aleatória (min, max)
 ROUTE_TIMEOUT_S = 120  # evita travamento em rota problemática
 
 # Debug temporário: focar em uma rota até estabilizar o scraper
-FOCUS_ROUTE_ONLY = True
+FOCUS_ROUTE_ONLY = False
 FOCUS_ROUTE = ("BSB", "REC")
+
+# ViajaNet detecta headless e retorna página vazia; usar headed para carregar o Angular
+HEADLESS = False
 
 
 PT_MONTHS = {
@@ -42,28 +45,67 @@ PT_MONTHS = {
 
 PRICE_SELECTORS = [
     ".favorite-card-pricebox-price-amount",
+    ".offer-card-pricebox-price-current",
     ".pricebox-price-amount",
     "[class*='pricebox-price-amount']",
+    "[class*='favorite-card-pricebox-price']",
 ]
+
+CARD_SELECTORS = [
+    "flights-card",
+    "favorite-card-flight-itinerary",
+    ".eva-3-card",
+]
+
+
+# Status em route_source_status que indicam "não buscar esta rota nesta fonte"
+ROUTE_SOURCE_STATUS_IGNORE = ("not_found", "invalid", "error", "unavailable")
 
 
 # ==========================
 # DB HELPERS
 # ==========================
-def get_routes(limit: int = MAX_ROUTES_PER_RUN) -> List[Tuple[str, str]]:
+def get_routes(limit: Optional[int] = None) -> List[Tuple[str, str]]:
+    """Retorna rotas da tabela routes que não estão marcadas para ignorar em route_source_status.
+    route_source_status: source, origin, destination, status, reason, last_checked, next_retry_at
+    """
+    effective_limit = limit if limit is not None else MAX_ROUTES_PER_RUN
     conn = psycopg2.connect(**DB_CONFIG)
     try:
         with conn.cursor() as cur:
+            sql = """
+                SELECT r.origin, r.destination
+                FROM routes r
+                LEFT JOIN route_source_status rss
+                  ON rss.origin = r.origin AND rss.destination = r.destination AND rss.source = %s
+                WHERE (rss.origin IS NULL OR rss.status IS NULL
+                       OR rss.status NOT IN %s)
+                ORDER BY r.id
+                """
+            params: tuple = (SOURCE_NAME, ROUTE_SOURCE_STATUS_IGNORE)
+            if effective_limit is not None:
+                sql += " LIMIT %s"
+                params = params + (effective_limit,)
+            cur.execute(sql, params)
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def upsert_route_source_status(origin: str, destination: str, status: str, reason: Optional[str] = None) -> None:
+    """Registra rota em route_source_status quando não existe na fonte (ex: redirect para home)."""
+    conn = psycopg2.connect(**DB_CONFIG)
+    try:
+        with conn, conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT origin, destination
-                FROM routes
-                ORDER BY id
-                LIMIT %s
+                INSERT INTO route_source_status (source, origin, destination, status, reason, last_checked)
+                VALUES (%s, %s, %s, %s, %s, now())
+                ON CONFLICT (source, origin, destination)
+                DO UPDATE SET status = EXCLUDED.status, reason = EXCLUDED.reason, last_checked = now()
                 """,
-                (limit,)
+                (SOURCE_NAME, origin, destination, status, reason),
             )
-            return cur.fetchall()
     finally:
         conn.close()
 
@@ -151,11 +193,9 @@ async def wait_for_results(page: Page, timeout_ms: int) -> bool:
     interval = 2000
 
     while elapsed < timeout_ms:
-        if await page.locator("favorite-card-flight-itinerary").count() > 0:
-            return True
-
-        if await page.locator(".eva-3-card").count() > 0:
-            return True
+        for selector in CARD_SELECTORS:
+            if await page.locator(selector).count() > 0:
+                return True
 
         for selector in PRICE_SELECTORS:
             if await page.locator(selector).count() > 0:
@@ -180,14 +220,16 @@ def extract_offers_from_html(html: str):
     """
     Fallback quando web-components não são materializados no query_selector_all.
     Tenta:
-      1) parsing por bloco <user-favorite-card>
+      1) parsing por bloco <flights-card> ou <user-favorite-card>
       2) parsing global por listas de rota/data/preço
     """
     offers = []
     html = html or ""
 
-    # 1) Melhor cenário: extrair cada card inteiro.
-    cards = re.findall(r"<user-favorite-card[\s\S]*?</user-favorite-card>", html, flags=re.I)
+    # 1) Melhor cenário: extrair cada card inteiro (ViajaNet usa flights-card).
+    cards = re.findall(r"<flights-card[\s\S]*?</flights-card>", html, flags=re.I)
+    if not cards:
+        cards = re.findall(r"<user-favorite-card[\s\S]*?</user-favorite-card>", html, flags=re.I)
     for card in cards:
         route_m = re.search(r'class="route-from-to"[^>]*>\s*([A-Z]{3}\s*-\s*[A-Z]{3})\s*<', card)
         date_m = re.search(r'class="date"[^>]*>\s*([^<]+)\s*<', card)
@@ -228,8 +270,12 @@ def extract_offers_from_html(html: str):
 
 async def extract_offers_from_visible_cards(page: Page):
     offers = []
-    cards = page.locator(".eva-3-card")
+    # ViajaNet usa flights-card; fallback para eva-3-card
+    cards = page.locator("flights-card")
     card_count = await cards.count()
+    if card_count == 0:
+        cards = page.locator(".eva-3-card")
+        card_count = await cards.count()
     total = min(card_count, MAX_OFFERS_PER_ROUTE)
 
     for i in range(total):
@@ -279,8 +325,8 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     valid_navigation = False
 
     for candidate_url in urls:
-        await page.goto(candidate_url, wait_until="domcontentloaded")
-        await page.wait_for_timeout(3000)
+        await page.goto(candidate_url, wait_until="load", timeout=60000)
+        await page.wait_for_timeout(10000)
 
         current_url = page.url
         if is_home_redirect(current_url):
@@ -297,6 +343,15 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
 
     if not valid_navigation:
         print("⚠️ Não foi possível carregar página válida da rota (home/URL inesperada).")
+        try:
+            upsert_route_source_status(
+                origin_hint, destination_hint,
+                status="not_found",
+                reason="redirect_to_home",
+            )
+            print(f"   Registrado em route_source_status: {origin_hint}->{destination_hint} (status=not_found)")
+        except Exception as e:
+            print(f"   Erro ao registrar em route_source_status: {e}")
         return 0
     # Alguns cenários abrem banner/overlay que atrapalha a renderização dos cards.
     # Tentamos fechar de forma defensiva sem quebrar a execução.
@@ -312,14 +367,19 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     has_results = await wait_for_results(page, timeout_ms=60000)
     if not has_results:
         # Viajanet eventualmente carrega estado incompleto; um reload costuma resolver.
-        await page.reload(wait_until="domcontentloaded")
+        await page.reload(wait_until="load", timeout=60000)
+        await page.wait_for_timeout(10000)
         has_results = await wait_for_results(page, timeout_ms=30000)
 
     if not has_results:
         print("⚠️ Timeout aguardando cards/preço; seguindo para checagem final do DOM.")
 
+    # ViajaNet: flights-card contém itinerary + pricebox; favorite-card-flight-itinerary também funciona
     itinerary_locator = page.locator("favorite-card-flight-itinerary")
     itinerary_count = await itinerary_locator.count()
+    if itinerary_count == 0:
+        itinerary_locator = page.locator("flights-card")
+        itinerary_count = await itinerary_locator.count()
     if itinerary_count == 0:
         # fallback por cards visíveis renderizados
         fallback_offers = await extract_offers_from_visible_cards(page)
@@ -331,6 +391,13 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
             html = await page.content()
             html_size = len(html or "")
             print(f"⚠️ Nenhum card encontrado. HTML recebido: {html_size} chars")
+            if html_size < 5000:
+                try:
+                    with open("debug_viajanet.html", "w", encoding="utf-8") as f:
+                        f.write(html)
+                    print("   (HTML salvo em debug_viajanet.html para inspeção)")
+                except Exception:
+                    pass
             return 0
 
         saved = 0
@@ -368,8 +435,10 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
         if not it:
             continue
 
-        # O que funcionou contigo: subir para um container que enxerga o pricebox
-        container = await it.evaluate_handle("el => el.parentElement.parentElement")
+        # ViajaNet: flights-card é o container raiz; subir até ele para ver itinerary + pricebox
+        container = await it.evaluate_handle(
+            "el => el.closest && el.closest('flights-card') || el.parentElement?.parentElement?.parentElement || el.parentElement?.parentElement || el"
+        )
 
         airline_el = await container.query_selector(".airline-name")
         airline = (await airline_el.inner_text()).strip() if airline_el else None
@@ -432,17 +501,23 @@ async def run_batch():
         routes = [FOCUS_ROUTE]
         print(f"🎯 Modo foco ativo: processando apenas {FOCUS_ROUTE[0]}->{FOCUS_ROUTE[1]}")
     else:
-        routes = get_routes(MAX_ROUTES_PER_RUN)
+        routes = get_routes()
         if not routes:
             print("❌ Nenhuma rota na tabela routes.")
             return
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(
+            headless=HEADLESS,
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+        )
         context = await browser.new_context(
             locale="pt-BR",
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            viewport={"width": 1920, "height": 1080},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            java_script_enabled=True,
         )
+        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = await context.new_page()
         page.set_default_timeout(30000)
 
