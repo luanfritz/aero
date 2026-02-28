@@ -33,9 +33,14 @@ DELAY_MS_BETWEEN_ROUTES = (2500, 6000)  # pausa aleatória (min, max)
 ROUTE_TIMEOUT_S = 120  # evita travamento em rota problemática
 
 # Debug temporário: focar em uma rota até estabilizar o scraper
-FOCUS_ROUTE_ONLY = True
+FOCUS_ROUTE_ONLY = False
 FOCUS_ROUTE = ("BSB", "REC")
+# Só incluir rotas que nunca foram scrapadas ou cuja última coleta foi há mais de 6 horas
+MIN_HOURS_SINCE_LAST_SCRAPE = 6
 NAVIGATION_ATTEMPTS = 3
+
+# ViajaNet retorna página vazia em headless; usar False para abrir o navegador
+HEADLESS = False
 
 
 
@@ -55,8 +60,9 @@ PRICE_SELECTORS = [
 # DB HELPERS
 # ==========================
 def get_routes(limit: Optional[int] = None) -> List[Tuple[str, str]]:
-    """Retorna rotas da tabela routes que não estão marcadas para ignorar em route_source_status.
-    route_source_status: source, origin, destination, status, reason, last_checked, next_retry_at
+    """Retorna rotas da tabela routes que:
+    - não estão marcadas para ignorar em route_source_status;
+    - nunca foram scrapadas ou a última coleta foi há mais de MIN_HOURS_SINCE_LAST_SCRAPE horas.
     """
     effective_limit = limit if limit is not None else MAX_ROUTES_PER_RUN
     conn = psycopg2.connect(**DB_CONFIG)
@@ -67,11 +73,23 @@ def get_routes(limit: Optional[int] = None) -> List[Tuple[str, str]]:
                 FROM routes r
                 LEFT JOIN route_source_status rss
                   ON rss.origin = r.origin AND rss.destination = r.destination AND rss.source = %s
-                WHERE (rss.origin IS NULL OR rss.status IS NULL
-                       OR rss.status NOT IN %s)
+                LEFT JOIN (
+                    SELECT origin, destination, source, MAX(created_at) AS last_scrape
+                    FROM flight_prices_raw
+                    WHERE source = %s
+                    GROUP BY origin, destination, source
+                ) last ON last.origin = r.origin AND last.destination = r.destination AND last.source = %s
+                WHERE (rss.origin IS NULL OR rss.status IS NULL OR rss.status NOT IN %s)
+                  AND (last.last_scrape IS NULL OR last.last_scrape < now() - (%s * interval '1 hour'))
                 ORDER BY r.id
                 """
-            params: tuple = (SOURCE_NAME, ROUTE_SOURCE_STATUS_IGNORE)
+            params: tuple = (
+                SOURCE_NAME,
+                SOURCE_NAME,
+                SOURCE_NAME,
+                ROUTE_SOURCE_STATUS_IGNORE,
+                MIN_HOURS_SINCE_LAST_SCRAPE,
+            )
             if effective_limit is not None:
                 sql += " LIMIT %s"
                 params = params + (effective_limit,)
@@ -485,11 +503,17 @@ async def run_batch():
             return
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(
+            headless=HEADLESS,
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+        )
         context = await browser.new_context(
             locale="pt-BR",
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            viewport={"width": 1920, "height": 1080},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            java_script_enabled=True,
         )
+        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = await context.new_page()
         page.set_default_timeout(30000)
 
