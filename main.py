@@ -6,7 +6,7 @@ from datetime import date
 from typing import Optional, Tuple, List
 
 import psycopg2
-from playwright.async_api import async_playwright, Page
+from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeoutError
 
 
 # ==========================
@@ -33,6 +33,12 @@ PT_MONTHS = {
     "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
     "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12
 }
+
+PRICE_SELECTORS = [
+    ".favorite-card-pricebox-price-amount",
+    ".pricebox-price-amount",
+    "[class*='pricebox-price-amount']",
+]
 
 
 # ==========================
@@ -137,8 +143,43 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
 
     await page.goto(url, wait_until="domcontentloaded")
 
-    # não usar networkidle aqui; esperar pelo preço
-    await page.wait_for_selector(".favorite-card-pricebox-price-amount", timeout=60000)
+    # Alguns cenários abrem banner/overlay que atrapalha a renderização dos cards.
+    # Tentamos fechar de forma defensiva sem quebrar a execução.
+    close_button = page.get_by_role("button", name=re.compile(r"aceitar|entendi|fechar", re.I)).first
+    try:
+        if await close_button.is_visible(timeout=2500):
+            await close_button.click()
+    except Exception:
+        pass
+
+    # Em algumas rotas o className do preço muda; espera por cards ou por qualquer
+    # variante conhecida de preço para evitar falso negativo.
+    try:
+        await page.wait_for_function(
+            """
+            (selectors) => {
+                const hasCards = document.querySelectorAll('favorite-card-flight-itinerary').length > 0;
+                const hasPrice = selectors.some((s) => document.querySelector(s));
+                return hasCards || hasPrice;
+            }
+            """,
+            arg=PRICE_SELECTORS,
+            timeout=60000,
+        )
+    except PlaywrightTimeoutError:
+        # Viajanet eventualmente carrega estado incompleto; um reload costuma resolver.
+        await page.reload(wait_until="domcontentloaded")
+        await page.wait_for_function(
+            """
+            (selectors) => {
+                const hasCards = document.querySelectorAll('favorite-card-flight-itinerary').length > 0;
+                const hasPrice = selectors.some((s) => document.querySelector(s));
+                return hasCards || hasPrice;
+            }
+            """,
+            arg=PRICE_SELECTORS,
+            timeout=30000,
+        )
 
     itineraries = await page.query_selector_all("favorite-card-flight-itinerary")
     if not itineraries:
@@ -162,7 +203,11 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
         route_els = await container.query_selector_all(".route-from-to")
         date_els = await container.query_selector_all(".date")
 
-        price_el = await container.query_selector(".favorite-card-pricebox-price-amount")
+        price_el = None
+        for selector in PRICE_SELECTORS:
+            price_el = await container.query_selector(selector)
+            if price_el:
+                break
         if not price_el:
             continue
 
