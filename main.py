@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from typing import Optional, Tuple, List
 
 import psycopg2
-from playwright.async_api import async_playwright, Page
+from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeoutError
 
 
 # ==========================
