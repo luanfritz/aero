@@ -9,6 +9,8 @@ from typing import Optional, Tuple, List
 import psycopg2
 from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeoutError
 
+from opportunities_engine import generate_opportunities
+
 
 # ==========================
 # CONFIG
@@ -31,11 +33,10 @@ DELAY_MS_BETWEEN_ROUTES = (2500, 6000)  # pausa aleatória (min, max)
 ROUTE_TIMEOUT_S = 120  # evita travamento em rota problemática
 
 # Debug temporário: focar em uma rota até estabilizar o scraper
-FOCUS_ROUTE_ONLY = False
+FOCUS_ROUTE_ONLY = True
 FOCUS_ROUTE = ("BSB", "REC")
+NAVIGATION_ATTEMPTS = 3
 
-# ViajaNet detecta headless e retorna página vazia; usar headed para carregar o Angular
-HEADLESS = False
 
 
 PT_MONTHS = {
@@ -45,21 +46,9 @@ PT_MONTHS = {
 
 PRICE_SELECTORS = [
     ".favorite-card-pricebox-price-amount",
-    ".offer-card-pricebox-price-current",
     ".pricebox-price-amount",
     "[class*='pricebox-price-amount']",
-    "[class*='favorite-card-pricebox-price']",
 ]
-
-CARD_SELECTORS = [
-    "flights-card",
-    "favorite-card-flight-itinerary",
-    ".eva-3-card",
-]
-
-
-# Status em route_source_status que indicam "não buscar esta rota nesta fonte"
-ROUTE_SOURCE_STATUS_IGNORE = ("not_found", "invalid", "error", "unavailable")
 
 
 # ==========================
@@ -152,10 +141,10 @@ def build_viajanet_url(origin: str, destination: str) -> str:
 
 def build_viajanet_url_variants(origin: str, destination: str) -> List[str]:
     base = f"https://www.viajanet.com.br/passagens-aereas/{origin.lower()}/{destination.lower()}"
-    query = "?from=SB&di=1&reSearch=true"
     return [
-        f"{base}/{query}",
-        f"{base}{query}",
+        f"{base}/?from=SB&di=1&reSearch=true",
+        f"{base}?from=SB&di=1&reSearch=true",
+        f"{base}/?from=HOME&di=1&reSearch=true",
     ]
 
 
@@ -193,9 +182,11 @@ async def wait_for_results(page: Page, timeout_ms: int) -> bool:
     interval = 2000
 
     while elapsed < timeout_ms:
-        for selector in CARD_SELECTORS:
-            if await page.locator(selector).count() > 0:
-                return True
+        if await page.locator("favorite-card-flight-itinerary").count() > 0:
+            return True
+
+        if await page.locator(".eva-3-card").count() > 0:
+            return True
 
         for selector in PRICE_SELECTORS:
             if await page.locator(selector).count() > 0:
@@ -220,16 +211,14 @@ def extract_offers_from_html(html: str):
     """
     Fallback quando web-components não são materializados no query_selector_all.
     Tenta:
-      1) parsing por bloco <flights-card> ou <user-favorite-card>
+      1) parsing por bloco <user-favorite-card>
       2) parsing global por listas de rota/data/preço
     """
     offers = []
     html = html or ""
 
-    # 1) Melhor cenário: extrair cada card inteiro (ViajaNet usa flights-card).
-    cards = re.findall(r"<flights-card[\s\S]*?</flights-card>", html, flags=re.I)
-    if not cards:
-        cards = re.findall(r"<user-favorite-card[\s\S]*?</user-favorite-card>", html, flags=re.I)
+    # 1) Melhor cenário: extrair cada card inteiro.
+    cards = re.findall(r"<user-favorite-card[\s\S]*?</user-favorite-card>", html, flags=re.I)
     for card in cards:
         route_m = re.search(r'class="route-from-to"[^>]*>\s*([A-Z]{3}\s*-\s*[A-Z]{3})\s*<', card)
         date_m = re.search(r'class="date"[^>]*>\s*([^<]+)\s*<', card)
@@ -270,12 +259,8 @@ def extract_offers_from_html(html: str):
 
 async def extract_offers_from_visible_cards(page: Page):
     offers = []
-    # ViajaNet usa flights-card; fallback para eva-3-card
-    cards = page.locator("flights-card")
+    cards = page.locator(".eva-3-card")
     card_count = await cards.count()
-    if card_count == 0:
-        cards = page.locator(".eva-3-card")
-        card_count = await cards.count()
     total = min(card_count, MAX_OFFERS_PER_ROUTE)
 
     for i in range(total):
@@ -309,6 +294,39 @@ def is_valid_route_url(url: str, origin: str, destination: str) -> bool:
     return host.endswith("viajanet.com.br") and path.startswith(expected_prefix)
 
 
+async def load_route_with_retries(page: Page, origin: str, destination: str) -> Optional[str]:
+    urls = build_viajanet_url_variants(origin, destination)
+
+    for attempt in range(1, NAVIGATION_ATTEMPTS + 1):
+        for base_url in urls:
+            candidate_url = f"{base_url}&_ts={int(asyncio.get_event_loop().time() * 1000)}"
+
+            try:
+                await page.goto(candidate_url, wait_until="networkidle")
+            except Exception:
+                await page.goto(candidate_url, wait_until="domcontentloaded")
+
+            await page.wait_for_timeout(3500)
+            current_url = page.url
+
+            if is_home_redirect(current_url):
+                print(f"⚠️ [tentativa {attempt}] Redirect home: {current_url}")
+                continue
+
+            if is_valid_route_url(current_url, origin, destination):
+                html_len = len(await page.content())
+                print(f"ℹ️ [tentativa {attempt}] URL válida: {current_url} (HTML {html_len})")
+                return current_url
+
+            html_len = len(await page.content())
+            print(f"⚠️ [tentativa {attempt}] URL inesperada: {current_url} (HTML {html_len})")
+
+        await page.context.clear_cookies()
+        await page.goto("about:blank")
+
+    return None
+
+
 # ==========================
 # SCRAPER CORE
 # ==========================
@@ -321,37 +339,9 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     print(f"\n🔎 Rota: {origin_hint}->{destination_hint}")
     print(f"URL: {urls[0]}")
 
-    url = urls[0]
-    valid_navigation = False
-
-    for candidate_url in urls:
-        await page.goto(candidate_url, wait_until="load", timeout=60000)
-        await page.wait_for_timeout(10000)
-
-        current_url = page.url
-        if is_home_redirect(current_url):
-            print(f"⚠️ Redirect para home em {candidate_url}: {current_url}")
-            continue
-
-        if is_valid_route_url(current_url, origin_hint, destination_hint):
-            url = current_url
-            valid_navigation = True
-            break
-
-        html_len = len(await page.content())
-        print(f"⚠️ URL inesperada ({current_url}) / HTML {html_len} em {candidate_url}, tentando variante...")
-
-    if not valid_navigation:
-        print("⚠️ Não foi possível carregar página válida da rota (home/URL inesperada).")
-        try:
-            upsert_route_source_status(
-                origin_hint, destination_hint,
-                status="not_found",
-                reason="redirect_to_home",
-            )
-            print(f"   Registrado em route_source_status: {origin_hint}->{destination_hint} (status=not_found)")
-        except Exception as e:
-            print(f"   Erro ao registrar em route_source_status: {e}")
+    url = await load_route_with_retries(page, origin_hint, destination_hint)
+    if not url:
+        print("⚠️ Não foi possível carregar página válida da rota após retries.")
         return 0
     # Alguns cenários abrem banner/overlay que atrapalha a renderização dos cards.
     # Tentamos fechar de forma defensiva sem quebrar a execução.
@@ -367,19 +357,14 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     has_results = await wait_for_results(page, timeout_ms=60000)
     if not has_results:
         # Viajanet eventualmente carrega estado incompleto; um reload costuma resolver.
-        await page.reload(wait_until="load", timeout=60000)
-        await page.wait_for_timeout(10000)
+        await page.reload(wait_until="domcontentloaded")
         has_results = await wait_for_results(page, timeout_ms=30000)
 
     if not has_results:
         print("⚠️ Timeout aguardando cards/preço; seguindo para checagem final do DOM.")
 
-    # ViajaNet: flights-card contém itinerary + pricebox; favorite-card-flight-itinerary também funciona
     itinerary_locator = page.locator("favorite-card-flight-itinerary")
     itinerary_count = await itinerary_locator.count()
-    if itinerary_count == 0:
-        itinerary_locator = page.locator("flights-card")
-        itinerary_count = await itinerary_locator.count()
     if itinerary_count == 0:
         # fallback por cards visíveis renderizados
         fallback_offers = await extract_offers_from_visible_cards(page)
@@ -391,13 +376,6 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
             html = await page.content()
             html_size = len(html or "")
             print(f"⚠️ Nenhum card encontrado. HTML recebido: {html_size} chars")
-            if html_size < 5000:
-                try:
-                    with open("debug_viajanet.html", "w", encoding="utf-8") as f:
-                        f.write(html)
-                    print("   (HTML salvo em debug_viajanet.html para inspeção)")
-                except Exception:
-                    pass
             return 0
 
         saved = 0
@@ -501,23 +479,17 @@ async def run_batch():
         routes = [FOCUS_ROUTE]
         print(f"🎯 Modo foco ativo: processando apenas {FOCUS_ROUTE[0]}->{FOCUS_ROUTE[1]}")
     else:
-        routes = get_routes()
+        routes = get_routes(MAX_ROUTES_PER_RUN)
         if not routes:
             print("❌ Nenhuma rota na tabela routes.")
             return
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=HEADLESS,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-        )
+        browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             locale="pt-BR",
-            viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            java_script_enabled=True,
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
         )
-        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = await context.new_page()
         page.set_default_timeout(30000)
 
@@ -541,6 +513,29 @@ async def run_batch():
 
     print(f"\n🎉 Total salvo nesta execução: {total_saved}")
 
+    opportunities = generate_opportunities()
+    print(f"🚨 Oportunidades novas geradas: {opportunities}")
+
+
+def choose_execution_mode() -> str:
+    print("\nEscolha o modo de execução:")
+    print("1) Scraping + motor de oportunidades")
+    print("2) Apenas motor de oportunidades")
+
+    try:
+        choice = input("Digite 1 ou 2 (padrão 1): ").strip()
+    except EOFError:
+        return "scraping"
+
+    if choice == "2":
+        return "opportunities"
+    return "scraping"
+
 
 if __name__ == "__main__":
-    asyncio.run(run_batch())
+    mode = choose_execution_mode()
+    if mode == "opportunities":
+        total = generate_opportunities()
+        print(f"🚨 Oportunidades novas geradas: {total}")
+    else:
+        asyncio.run(run_batch())
