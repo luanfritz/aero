@@ -30,6 +30,11 @@ MAX_OFFERS_PER_ROUTE = 25        # limita quantos cards por rota (pra não demor
 DELAY_MS_BETWEEN_ROUTES = (2500, 6000)  # pausa aleatória (min, max)
 ROUTE_TIMEOUT_S = 120  # evita travamento em rota problemática
 
+# Debug temporário: focar em uma rota até estabilizar o scraper
+FOCUS_ROUTE_ONLY = True
+FOCUS_ROUTE = ("BSB", "REC")
+MIN_HTML_LEN_FOR_VALID_PAGE = 4000
+
 
 PT_MONTHS = {
     "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
@@ -102,6 +107,15 @@ def build_viajanet_url(origin: str, destination: str) -> str:
         f"{origin.lower()}/{destination.lower()}/"
         f"?from=SB&di=1&reSearch=true"
     )
+
+
+def build_viajanet_url_variants(origin: str, destination: str) -> List[str]:
+    base = f"https://www.viajanet.com.br/passagens-aereas/{origin.lower()}/{destination.lower()}"
+    query = "?from=SB&di=1&reSearch=true"
+    return [
+        f"{base}/{query}",
+        f"{base}{query}",
+    ]
 
 
 def parse_price_to_int(price_text: str) -> int:
@@ -250,17 +264,35 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     origin_hint/destination_hint: vindo da tabela routes.
     A página pode renderizar CNF/BPS etc. A gente usa o que extrair do card.
     """
-    url = build_viajanet_url(origin_hint, destination_hint)
+    urls = build_viajanet_url_variants(origin_hint, destination_hint)
     print(f"\n🔎 Rota: {origin_hint}->{destination_hint}")
-    print(f"URL: {url}")
+    print(f"URL: {urls[0]}")
 
-    await page.goto(url, wait_until="domcontentloaded")
+    url = urls[0]
+    valid_navigation = False
 
-    current_url = page.url
-    if is_home_redirect(current_url):
-        print(f"⚠️ Rota inexistente (redirect para home): {current_url}")
+    for candidate_url in urls:
+        await page.goto(candidate_url, wait_until="load")
+        await page.wait_for_timeout(1500)
+
+        current_url = page.url
+        html_len = len(await page.content())
+
+        if is_home_redirect(current_url):
+            print(f"⚠️ Redirect para home em {candidate_url}: {current_url}")
+            continue
+
+        if html_len < MIN_HTML_LEN_FOR_VALID_PAGE:
+            print(f"⚠️ HTML curto ({html_len}) em {candidate_url}, tentando variante...")
+            continue
+
+        url = candidate_url
+        valid_navigation = True
+        break
+
+    if not valid_navigation:
+        print("⚠️ Não foi possível carregar página válida da rota (home/HTML curto).")
         return 0
-
     # Alguns cenários abrem banner/overlay que atrapalha a renderização dos cards.
     # Tentamos fechar de forma defensiva sem quebrar a execução.
     close_button = page.get_by_role("button", name=re.compile(r"aceitar|entendi|fechar", re.I)).first
@@ -391,14 +423,21 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
 
 
 async def run_batch():
-    routes = get_routes(MAX_ROUTES_PER_RUN)
-    if not routes:
-        print("❌ Nenhuma rota na tabela routes.")
-        return
+    if FOCUS_ROUTE_ONLY:
+        routes = [FOCUS_ROUTE]
+        print(f"🎯 Modo foco ativo: processando apenas {FOCUS_ROUTE[0]}->{FOCUS_ROUTE[1]}")
+    else:
+        routes = get_routes(MAX_ROUTES_PER_RUN)
+        if not routes:
+            print("❌ Nenhuma rota na tabela routes.")
+            return
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context()
+        context = await browser.new_context(
+            locale="pt-BR",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        )
         page = await context.new_page()
         page.set_default_timeout(30000)
 
