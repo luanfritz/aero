@@ -9,6 +9,8 @@ from typing import Optional, Tuple, List
 import psycopg2
 from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeoutError
 
+from opportunities_engine import generate_opportunities
+
 
 # ==========================
 # CONFIG
@@ -573,5 +575,26 @@ async def run_batch():
     print(f"\n🎉 Total salvo nesta execução: {total_saved}")
 
 
-if __name__ == "__main__":
+def run_opportunities_engine() -> None:
+    """Executa o motor de análise de oportunidades (todas as fontes em flight_prices_raw)."""
+    generate_opportunities(db_config=DB_CONFIG, source=None)
+
+
+def main() -> None:
+    print("Escolha o modo de execução:")
+    print("  1) Scraping + motor de oportunidades")
+    print("  2) Apenas motor de oportunidades")
+    try:
+        choice = input("Opção (1 ou 2): ").strip() or "1"
+    except EOFError:
+        choice = "1"
+    if choice == "2":
+        run_opportunities_engine()
+        return
+    # Opção 1 ou padrão: scraping e depois motor de oportunidades
     asyncio.run(run_batch())
+    run_opportunities_engine()
+
+
+if __name__ == "__main__":
+    main()
