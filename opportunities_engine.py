@@ -236,4 +236,8 @@ def generate_opportunities(
 
 
 if __name__ == "__main__":
+
     generate_opportunities(source=None)  # todas as fontes
+    total = generate_opportunities()
+    print(f"🚨 Oportunidades novas geradas: {total}")
+
