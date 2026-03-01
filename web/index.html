@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ofertas de Voos | Promoções</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='24' font-size='24'>✈</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="header-inner">
+        <nav class="header-nav">
+          <a href="#" class="btn-home" id="btn-home" aria-label="Ir para a home">Home</a>
+        </nav>
+        <h1 class="logo">✈ Ofertas de Voos</h1>
+        <p class="tagline">Promoções agregadas de passagens aéreas</p>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="filters">
+        <div class="filter-group filter-group-autocomplete">
+          <label for="filter-origin">Origem</label>
+          <input type="text" id="filter-origin" placeholder="Ex: Belo Horizonte ou CNF" autocomplete="off" />
+          <div class="autocomplete-dropdown" id="origin-autocomplete" role="listbox" aria-label="Sugestões de origem" hidden></div>
+        </div>
+        <div class="filter-group filter-group-autocomplete">
+          <label for="filter-dest">Destino</label>
+          <input type="text" id="filter-dest" placeholder="Ex: Belo Horizonte ou CNF" autocomplete="off" />
+          <div class="autocomplete-dropdown" id="dest-autocomplete" role="listbox" aria-label="Sugestões de destino" hidden></div>
+        </div>
+        <div class="filter-group filter-period-dates" id="filter-period-wrap">
+          <label>Período</label>
+          <div class="filter-period-inputs">
+            <input type="date" id="filter-date-from" aria-label="Data início" />
+            <span class="filter-period-sep">até</span>
+            <input type="date" id="filter-date-to" aria-label="Data fim" />
+          </div>
+        </div>
+        <div class="filter-group filter-month-wrap filter-hidden" id="filter-month-wrap">
+          <label>Mês das promoções</label>
+          <div class="month-picker-trigger" id="month-picker-trigger" tabindex="0" role="button" aria-label="Abrir calendário de meses">Selecione o mês</div>
+          <input type="hidden" id="filter-month" value="" />
+          <div class="month-picker-dropdown" id="month-picker-dropdown" hidden>
+            <div class="month-picker-header">
+              <button type="button" class="month-picker-prev" id="month-picker-prev" aria-label="Ano anterior">‹</button>
+              <span class="month-picker-year" id="month-picker-year">2026</span>
+              <button type="button" class="month-picker-next" id="month-picker-next" aria-label="Próximo ano">›</button>
+            </div>
+            <div class="month-picker-grid" id="month-picker-grid"></div>
+          </div>
+        </div>
+        <div class="filter-group filter-toggle-row">
+          <label class="filter-toggle-label">Escolher por mês</label>
+          <button type="button" class="toggle-btn" id="toggle-month" role="switch" aria-checked="false" aria-label="Escolher por mês">
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </button>
+        </div>
+        <button type="button" class="btn-refresh" id="btn-refresh" title="Atualizar">Atualizar</button>
+      </section>
+
+      <div class="state state-loading" id="state-loading">
+        <div class="spinner"></div>
+        <p>Carregando ofertas...</p>
+      </div>
+      <div class="state state-empty" id="state-empty" hidden>
+        <p>Nenhuma oferta encontrada.</p>
+        <p class="state-hint">Execute o scraper e o motor de oportunidades para popular os dados.</p>
+      </div>
+      <div class="state state-error" id="state-error" hidden>
+        <p id="error-msg">Erro ao carregar.</p>
+      </div>
+
+      <section class="highlight-section" id="highlight-section" hidden>
+        <h2 class="highlight-title">Principais ofertas</h2>
+        <p class="highlight-desc">Ofertas em destaque por melhor preço</p>
+        <div class="highlight-cards" id="highlight-cards"></div>
+        <div class="highlight-actions">
+          <button type="button" class="btn-ver-todas" id="btn-ver-todas">Ver todas as ofertas</button>
+        </div>
+      </section>
+
+      <section class="list-section" id="list-section" hidden>
+        <div class="list-section-header">
+          <button type="button" class="btn-voltar-home" id="btn-voltar-home">← Voltar à home</button>
+        </div>
+        <div class="opportunities" id="opportunities"></div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Construído por <strong>BransStack Labs</strong></p>
+    </footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
