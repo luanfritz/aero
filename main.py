@@ -38,13 +38,6 @@ MAX_OFFERS_PER_ROUTE = 25        # limita quantos cards por rota (pra não demor
 DELAY_MS_BETWEEN_ROUTES = (2500, 6000)  # pausa aleatória (min, max)
 ROUTE_TIMEOUT_S = 120  # evita travamento em rota problemática
 
-# Debug temporário: focar em uma rota até estabilizar o scraper
-FOCUS_ROUTE_ONLY = True
-FOCUS_ROUTE = ("BSB", "REC")
-NAVIGATION_ATTEMPTS = 3
-ROUTE_SOURCE_STATUS_IGNORE = ("INACTIVE", "BLOCKED")
-BROWSER_HEADLESS = False  # False abre navegador visível para depuração
-
 
 PT_MONTHS = {
     "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
@@ -237,6 +230,9 @@ async def wait_for_results(page: Page, timeout_ms: int) -> bool:
         for selector in PRICE_SELECTORS:
             if await page.query_selector(selector):
                 return True
+
+        if elapsed > 0 and elapsed % 10000 == 0:
+            print(f"⏳ Aguardando resultados... {elapsed // 1000}s")
 
         # Ajuda quando a página só renderiza cards após interações/scroll.
         try:
