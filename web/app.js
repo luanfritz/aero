@@ -433,7 +433,75 @@
     }
 
     setState("ok");
-    if (viewMode === "home") {
+    var originFilled = (parseAirportInput(filterOrigin && filterOrigin.value) || "").trim();
+    var destFilled = (parseAirportInput(filterDest && filterDest.value) || "").trim();
+    var bothFiltersSet = originFilled.length >= 3 && destFilled.length >= 3;
+
+    if (bothFiltersSet) {
+      if (highlightSection) highlightSection.hidden = true;
+      if (listSection) listSection.hidden = false;
+      if (container) container.style.display = "";
+      container.innerHTML = "";
+      routes.forEach((route) => {
+        const minPrice = Math.min(...route.offers.map((o) => o.price));
+        const card = document.createElement("div");
+        card.className = "route-card";
+        card.innerHTML =
+          '<div class="route-header">' +
+          '<span class="route-route">' +
+          formatAirport(route.origin) +
+          ' <span>→</span> ' +
+          formatAirport(route.destination) +
+          "</span>" +
+          '<span class="route-min-price">' +
+          formatPrice(minPrice) +
+          "</span>" +
+          "</div>" +
+          '<div class="offers">' +
+          '<div class="offer-row offer-header">' +
+          '<span class="offer-source">Fornecedor</span>' +
+          '<span class="offer-date">Data partida</span>' +
+          '<span class="offer-price">Preço</span>' +
+          '<span class="offer-link-cell">Ver oferta</span>' +
+          '</div>' +
+          '</div>';
+        const offersEl = card.querySelector(".offers");
+        var offersSorted = route.offers.slice().sort(function (a, b) {
+          var da = a.departure_date ? new Date(a.departure_date).getTime() : 0;
+          var db = b.departure_date ? new Date(b.departure_date).getTime() : 0;
+          return da - db;
+        });
+        offersSorted.forEach((offer) => {
+          var offerHref = (function () {
+            var src = (offer.source || "").toLowerCase();
+            if (src === "viajanet" && !offer.return_date && offer.departure_date) {
+              var u = buildViajanetOnewayUrl(route.origin, route.destination, offer.departure_date);
+              if (u) return u;
+            }
+            return offer.url || "#";
+          })();
+          const row = document.createElement("div");
+          row.className = "offer-row";
+          row.innerHTML =
+            '<span class="offer-source ' +
+            sourceClass(offer.source) +
+            '">' +
+            sourceLabel(offer.source) +
+            "</span>" +
+            '<span class="offer-date">' +
+            formatDate(offer.departure_date) +
+            "</span>" +
+            '<span class="offer-price">' +
+            formatPrice(offer.price) +
+            "</span>" +
+            (offerHref && offerHref !== "#"
+              ? '<a class="offer-link" href="' + escapeHtml(offerHref) + '" target="_blank" rel="noopener">Ver oferta</a>'
+              : '<span class="offer-link-cell"></span>');
+          offersEl.appendChild(row);
+        });
+        container.appendChild(card);
+      });
+    } else if (viewMode === "home") {
       renderHighlightCards(routes);
       if (listSection) listSection.hidden = true;
       if (container) container.style.display = "none";
@@ -463,7 +531,20 @@
           '</div>' +
           '</div>';
         const offersEl = card.querySelector(".offers");
-        route.offers.forEach((offer) => {
+        var offersSorted = route.offers.slice().sort(function (a, b) {
+          var da = a.departure_date ? new Date(a.departure_date).getTime() : 0;
+          var db = b.departure_date ? new Date(b.departure_date).getTime() : 0;
+          return da - db;
+        });
+        offersSorted.forEach((offer) => {
+          var offerHref = (function () {
+            var src = (offer.source || "").toLowerCase();
+            if (src === "viajanet" && !offer.return_date && offer.departure_date) {
+              var u = buildViajanetOnewayUrl(route.origin, route.destination, offer.departure_date);
+              if (u) return u;
+            }
+            return offer.url || "#";
+          })();
           const row = document.createElement("div");
           row.className = "offer-row";
           row.innerHTML =
@@ -478,10 +559,8 @@
             '<span class="offer-price">' +
             formatPrice(offer.price) +
             "</span>" +
-            (offer.url
-              ? '<a class="offer-link" href="' +
-                (offer.url || "#") +
-                '" target="_blank" rel="noopener">Ver oferta</a>'
+            (offerHref && offerHref !== "#"
+              ? '<a class="offer-link" href="' + escapeHtml(offerHref) + '" target="_blank" rel="noopener">Ver oferta</a>'
               : '<span class="offer-link-cell"></span>');
           offersEl.appendChild(row);
         });

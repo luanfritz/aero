@@ -39,14 +39,18 @@ PAGE_LOAD_TIMEOUT = 30000
 WAIT_AFTER_CLICK_MS = 1500
 WAIT_VER_DATAS_MS = 2500
 
-# Códigos do site que devem ser normalizados para IATA (ex.: Melhores Destinos usa BHZ = Belo Horizonte, mas o aeroporto é CNF/Confins)
-AIRPORT_CODE_NORMALIZE = {"BHZ": "CNF"}
+# Códigos do site que devem ser normalizados para IATA (ex.: Melhores Destinos usa BHZ = CNF, RIO = GIG, SAO = GRU)
+AIRPORT_CODE_NORMALIZE = {"BHZ": "CNF", "RIO": "GIG", "SAO": "GRU"}
 
-# Nomes/labels que indicam Belo Horizonte (CNF) quando o site mostra BHZ ou só o nome
+# Nomes/labels que indicam aeroporto quando o site mostra código ou só o nome
 NAME_TO_CODE_HINTS = [
     ("BELO HORIZONTE", "CNF"),
     ("BHZ", "CNF"),
     ("CONFINS", "CNF"),
+    ("RIO DE JANEIRO", "GIG"),
+    ("SÃO PAULO", "GRU"),
+    ("SAO PAULO", "GRU"),
+    ("GUARULHOS", "GRU"),
 ]
 
 

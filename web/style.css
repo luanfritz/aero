@@ -625,23 +625,26 @@ a.highlight-card:hover {
 
 .offers {
   padding: 0.75rem 1.25rem 1rem;
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(110px, auto) minmax(90px, auto) minmax(6rem, auto);
+  gap: 0 1rem;
+  align-items: center;
 }
 
 .offer-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+  display: contents;
+}
+
+.offer-row > * {
   padding: 0.6rem 0;
   border-bottom: 1px solid var(--border);
 }
 
-.offer-row:last-child {
+.offer-row:last-child > * {
   border-bottom: none;
 }
 
-.offer-row.offer-header {
+.offer-row.offer-header > * {
   padding: 0.5rem 0 0.4rem;
   border-bottom: 1px solid var(--border);
   font-size: 0.75rem;
@@ -657,8 +660,9 @@ a.highlight-card:hover {
   color: var(--text-muted);
 }
 
-.offer-link-cell {
-  min-width: 6rem;
+.offers .offer-link-cell,
+.offers .offer-link {
+  justify-self: end;
   text-align: right;
 }
 
@@ -753,8 +757,9 @@ a.highlight-card:hover {
     align-items: flex-start;
   }
 
-  .offer-row {
-    flex-direction: column;
-    align-items: flex-start;
+  .offers {
+    grid-template-columns: minmax(100px, 1fr) minmax(90px, auto) minmax(70px, auto) minmax(5rem, auto);
+    gap: 0 0.5rem;
+    font-size: 0.9rem;
   }
 }
