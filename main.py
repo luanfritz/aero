@@ -246,6 +246,63 @@ async def wait_for_results(page: Page, timeout_ms: int) -> bool:
     return False
 
 
+def extract_offers_from_html(html: str):
+    """
+    Fallback quando web-components não são materializados no query_selector_all.
+    Tenta:
+      1) parsing por bloco <user-favorite-card>
+      2) parsing global por listas de rota/data/preço
+    """
+    offers = []
+    html = html or ""
+
+    # 1) Melhor cenário: extrair cada card inteiro.
+    cards = re.findall(r"<user-favorite-card[\s\S]*?</user-favorite-card>", html, flags=re.I)
+    for card in cards:
+        route_m = re.search(r'class="route-from-to"[^>]*>\s*([A-Z]{3}\s*-\s*[A-Z]{3})\s*<', card)
+        date_m = re.search(r'class="date"[^>]*>\s*([^<]+)\s*<', card)
+        price_m = re.search(r'class="[^"]*price[^"]*amount[^"]*"[^>]*>\s*([\d\.,]+)\s*<', card)
+
+        route_text = route_m.group(1).strip() if route_m else ""
+        date_text = date_m.group(1).strip() if date_m else ""
+        price_text = price_m.group(1).strip() if price_m else ""
+
+        if route_text and date_text and price_text:
+            offers.append((route_text, date_text, price_text))
+
+    if offers:
+        return offers
+
+    # 2) Fallback global: alguns retornos não fecham/expõem bem os custom elements.
+    routes = re.findall(r'class="route-from-to"[^>]*>\s*([A-Z]{3}\s*-\s*[A-Z]{3})\s*<', html)
+    dates = re.findall(r'class="date"[^>]*>\s*([^<]+)\s*<', html)
+    prices = re.findall(r'class="[^"]*price[^"]*amount[^"]*"[^>]*>\s*([\d\.,]+)\s*<', html)
+
+    if not routes or not dates or not prices:
+        return []
+
+    # Em geral vem IDA/VOLTA (2 rotas, 2 datas) para cada preço.
+    outbound_routes = routes[::2] if len(routes) > 1 else routes
+    outbound_dates = dates[::2] if len(dates) > 1 else dates
+
+    total = min(len(outbound_routes), len(outbound_dates), len(prices), MAX_OFFERS_PER_ROUTE)
+    for i in range(total):
+        route_text = outbound_routes[i].strip()
+        date_text = outbound_dates[i].strip()
+        price_text = prices[i].strip()
+        if route_text and date_text and price_text:
+            offers.append((route_text, date_text, price_text))
+
+    return offers
+
+
+def is_home_redirect(url: str) -> bool:
+    parsed = urlparse(url or "")
+    host = parsed.netloc.lower()
+    path = (parsed.path or "/").rstrip("/")
+    return host.endswith("viajanet.com.br") and path == ""
+
+
 # ==========================
 # SCRAPER CORE
 # ==========================
@@ -258,10 +315,13 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     print(f"\n🔎 Rota: {origin_hint}->{destination_hint}")
     print(f"URL: {urls[0]}")
 
-    url = await load_route_with_retries(page, origin_hint, destination_hint)
-    if not url:
-        print("⚠️ Não foi possível carregar página válida da rota após retries.")
+    await page.goto(url, wait_until="domcontentloaded")
+
+    current_url = page.url
+    if is_home_redirect(current_url):
+        print(f"⚠️ Rota inexistente (redirect para home): {current_url}")
         return 0
+
     # Alguns cenários abrem banner/overlay que atrapalha a renderização dos cards.
     # Tentamos fechar de forma defensiva sem quebrar a execução.
     close_button = page.get_by_role("button", name=re.compile(r"aceitar|entendi|fechar", re.I)).first
@@ -284,8 +344,38 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
 
     itineraries = await page.query_selector_all("favorite-card-flight-itinerary")
     if not itineraries:
-        print("⚠️ Nenhum card encontrado.")
-        return 0
+        # fallback por HTML bruto (algumas execuções não materializam os custom elements no query_selector_all)
+        html = await page.content()
+        fallback_offers = extract_offers_from_html(html)
+        if not fallback_offers:
+            html_size = len(html or "")
+            print(f"⚠️ Nenhum card encontrado. HTML recebido: {html_size} chars")
+            return 0
+
+        saved = 0
+        for route_out, date_out_text, price_text in fallback_offers[:MAX_OFFERS_PER_ROUTE]:
+            origin, destination = parse_route(route_out)
+            dep_date = parse_ptbr_date(date_out_text)
+            price_brl = parse_price_to_int(price_text)
+            if not origin or not destination or not dep_date or price_brl <= 0:
+                continue
+
+            payload = {
+                "airline": None,
+                "route_out": route_out,
+                "date_out_text": date_out_text,
+                "return_date_text": None,
+                "price_text": price_text,
+                "url": url,
+                "origin_hint": origin_hint,
+                "destination_hint": destination_hint,
+                "extraction_mode": "html_fallback",
+            }
+            insert_raw(origin, destination, dep_date, None, price_brl, payload)
+            saved += 1
+
+        print(f"✅ Salvos via fallback HTML para {origin_hint}->{destination_hint}: {saved}")
+        return saved
 
     total = min(len(itineraries), MAX_OFFERS_PER_ROUTE)
     print(f"Encontrados {len(itineraries)} cards (processando {total})")
