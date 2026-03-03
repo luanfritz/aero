@@ -3,10 +3,19 @@ import json
 import random
 import re
 from datetime import date
+from urllib.parse import urlparse
 from typing import Optional, Tuple, List
 
 import psycopg2
 from playwright.async_api import async_playwright, Page, TimeoutError as PlaywrightTimeoutError
+
+from opportunities_engine import generate_opportunities
+
+from opportunities_engine import generate_opportunities
+
+from opportunities_engine import generate_opportunities
+
+from opportunities_engine import generate_opportunities
 
 
 # ==========================
@@ -24,9 +33,17 @@ DB_CONFIG = {
 SOURCE_NAME = "viajanet"
 CURRENCY = "BRL"
 
-MAX_ROUTES_PER_RUN = 10          # quantas rotas você quer por execução
+MAX_ROUTES_PER_RUN = None        # None = todas as rotas elegíveis do DB
 MAX_OFFERS_PER_ROUTE = 25        # limita quantos cards por rota (pra não demorar demais)
 DELAY_MS_BETWEEN_ROUTES = (2500, 6000)  # pausa aleatória (min, max)
+ROUTE_TIMEOUT_S = 120  # evita travamento em rota problemática
+
+# Debug temporário: focar em uma rota até estabilizar o scraper
+FOCUS_ROUTE_ONLY = True
+FOCUS_ROUTE = ("BSB", "REC")
+NAVIGATION_ATTEMPTS = 3
+ROUTE_SOURCE_STATUS_IGNORE = ("INACTIVE", "BLOCKED")
+BROWSER_HEADLESS = False  # False abre navegador visível para depuração
 
 
 PT_MONTHS = {
@@ -44,19 +61,87 @@ PRICE_SELECTORS = [
 # ==========================
 # DB HELPERS
 # ==========================
+def has_column(table_name: str, column_name: str) -> bool:
+    conn = psycopg2.connect(**DB_CONFIG)
+    try:
+        with conn.cursor() as cur:
+            sql = """
+                SELECT r.origin, r.destination
+                FROM routes r
+                LEFT JOIN route_source_status rss
+                  ON rss.origin = r.origin AND rss.destination = r.destination AND rss.source = %s
+                LEFT JOIN (
+                    SELECT origin, destination, source, MAX(created_at) AS last_scrape
+                    FROM flight_prices_raw
+                    WHERE source = %s
+                    GROUP BY origin, destination, source
+                ) last ON last.origin = r.origin AND last.destination = r.destination AND last.source = %s
+                WHERE (rss.origin IS NULL OR rss.status IS NULL OR rss.status NOT IN %s)
+                  AND (last.last_scrape IS NULL OR last.last_scrape < now() - (%s * interval '1 hour'))
+                ORDER BY r.id
+                """
+            params: tuple = (
+                SOURCE_NAME,
+                SOURCE_NAME,
+                SOURCE_NAME,
+                ROUTE_SOURCE_STATUS_IGNORE,
+                MIN_HOURS_SINCE_LAST_SCRAPE,
+            )
+            if effective_limit is not None:
+                sql += " LIMIT %s"
+                params = params + (effective_limit,)
+            cur.execute(sql, params)
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def upsert_route_source_status(origin: str, destination: str, status: str, reason: Optional[str] = None) -> None:
+    """Registra rota em route_source_status quando não existe na fonte (ex: redirect para home)."""
+    conn = psycopg2.connect(**DB_CONFIG)
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = %s
+                  AND column_name = %s
+                LIMIT 1
+                """,
+                (table_name, column_name),
+            )
+            return cur.fetchone() is not None
+    finally:
+        conn.close()
+
+
 def get_routes(limit: int = MAX_ROUTES_PER_RUN) -> List[Tuple[str, str]]:
     conn = psycopg2.connect(**DB_CONFIG)
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT origin, destination
-                FROM routes
-                ORDER BY id
-                LIMIT %s
-                """,
-                (limit,)
-            )
+            if has_column("routes", "source_status"):
+                cur.execute(
+                    """
+                    SELECT origin, destination
+                    FROM routes
+                    WHERE COALESCE(source_status, '') <> ALL(%s)
+                    ORDER BY id
+                    LIMIT %s
+                    """,
+                    (list(ROUTE_SOURCE_STATUS_IGNORE), limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT origin, destination
+                    FROM routes
+                    ORDER BY id
+                    LIMIT %s
+                    """,
+                    (limit,)
+                )
             return cur.fetchall()
     finally:
         conn.close()
@@ -100,6 +185,15 @@ def build_viajanet_url(origin: str, destination: str) -> str:
         f"{origin.lower()}/{destination.lower()}/"
         f"?from=SB&di=1&reSearch=true"
     )
+
+
+def build_viajanet_url_variants(origin: str, destination: str) -> List[str]:
+    base = f"https://www.viajanet.com.br/passagens-aereas/{origin.lower()}/{destination.lower()}"
+    return [
+        f"{base}/?from=SB&di=1&reSearch=true",
+        f"{base}?from=SB&di=1&reSearch=true",
+        f"{base}/?from=HOME&di=1&reSearch=true",
+    ]
 
 
 def parse_price_to_int(price_text: str) -> int:
@@ -164,12 +258,14 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     origin_hint/destination_hint: vindo da tabela routes.
     A página pode renderizar CNF/BPS etc. A gente usa o que extrair do card.
     """
-    url = build_viajanet_url(origin_hint, destination_hint)
+    urls = build_viajanet_url_variants(origin_hint, destination_hint)
     print(f"\n🔎 Rota: {origin_hint}->{destination_hint}")
-    print(f"URL: {url}")
+    print(f"URL: {urls[0]}")
 
-    await page.goto(url, wait_until="domcontentloaded")
-
+    url = await load_route_with_retries(page, origin_hint, destination_hint)
+    if not url:
+        print("⚠️ Não foi possível carregar página válida da rota após retries.")
+        return 0
     # Alguns cenários abrem banner/overlay que atrapalha a renderização dos cards.
     # Tentamos fechar de forma defensiva sem quebrar a execução.
     close_button = page.get_by_role("button", name=re.compile(r"aceitar|entendi|fechar", re.I)).first
@@ -201,10 +297,14 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     saved = 0
 
     for i in range(total):
-        it = itineraries[i]
+        it = await itinerary_locator.nth(i).element_handle()
+        if not it:
+            continue
 
-        # O que funcionou contigo: subir para um container que enxerga o pricebox
-        container = await it.evaluate_handle("el => el.parentElement.parentElement")
+        # ViajaNet: flights-card é o container raiz; subir até ele para ver itinerary + pricebox
+        container = await it.evaluate_handle(
+            "el => el.closest && el.closest('flights-card') || el.parentElement?.parentElement?.parentElement || el.parentElement?.parentElement || el"
+        )
 
         airline_el = await container.query_selector(".airline-name")
         airline = (await airline_el.inner_text()).strip() if airline_el else None
@@ -263,21 +363,31 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
 
 
 async def run_batch():
-    routes = get_routes(MAX_ROUTES_PER_RUN)
-    if not routes:
-        print("❌ Nenhuma rota na tabela routes.")
-        return
+    if FOCUS_ROUTE_ONLY:
+        routes = [FOCUS_ROUTE]
+        print(f"🎯 Modo foco ativo: processando apenas {FOCUS_ROUTE[0]}->{FOCUS_ROUTE[1]}")
+    else:
+        routes = get_routes(MAX_ROUTES_PER_RUN)
+        if not routes:
+            print("❌ Nenhuma rota na tabela routes.")
+            return
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
+        browser = await p.chromium.launch(headless=BROWSER_HEADLESS)
         context = await browser.new_context()
         page = await context.new_page()
+        page.set_default_timeout(30000)
 
         total_saved = 0
 
         for (origin, destination) in routes:
             try:
-                total_saved += await scrape_route(page, origin, destination)
+                total_saved += await asyncio.wait_for(
+                    scrape_route(page, origin, destination),
+                    timeout=ROUTE_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                print(f"❌ Timeout geral na rota {origin}->{destination} após {ROUTE_TIMEOUT_S}s")
             except Exception as e:
                 print(f"❌ Erro em {origin}->{destination}: {e}")
 
@@ -288,6 +398,8 @@ async def run_batch():
 
     print(f"\n🎉 Total salvo nesta execução: {total_saved}")
 
+    opportunities = generate_opportunities()
+    print(f"🚨 Oportunidades novas geradas: {opportunities}")
 
 if __name__ == "__main__":
     asyncio.run(run_batch())
