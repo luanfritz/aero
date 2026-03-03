@@ -17,6 +17,8 @@ from opportunities_engine import generate_opportunities
 
 from opportunities_engine import generate_opportunities
 
+from opportunities_engine import generate_opportunities
+
 
 # ==========================
 # CONFIG
@@ -37,6 +39,13 @@ MAX_ROUTES_PER_RUN = None        # None = todas as rotas elegíveis do DB
 MAX_OFFERS_PER_ROUTE = 25        # limita quantos cards por rota (pra não demorar demais)
 DELAY_MS_BETWEEN_ROUTES = (2500, 6000)  # pausa aleatória (min, max)
 ROUTE_TIMEOUT_S = 120  # evita travamento em rota problemática
+
+# Debug temporário: focar em uma rota até estabilizar o scraper
+FOCUS_ROUTE_ONLY = True
+FOCUS_ROUTE = ("BSB", "REC")
+NAVIGATION_ATTEMPTS = 3
+ROUTE_SOURCE_STATUS_IGNORE = ("INACTIVE", "BLOCKED")
+BROWSER_HEADLESS = False  # False abre navegador visível para depuração
 
 
 PT_MONTHS = {
@@ -223,12 +232,14 @@ async def wait_for_results(page: Page, timeout_ms: int) -> bool:
     interval = 2000
 
     while elapsed < timeout_ms:
-        itineraries = await page.query_selector_all("favorite-card-flight-itinerary")
-        if itineraries:
+        if await page.locator("favorite-card-flight-itinerary").count() > 0:
+            return True
+
+        if await page.locator(".eva-3-card").count() > 0:
             return True
 
         for selector in PRICE_SELECTORS:
-            if await page.query_selector(selector):
+            if await page.locator(selector).count() > 0:
                 return True
 
         if elapsed > 0 and elapsed % 10000 == 0:
@@ -296,11 +307,74 @@ def extract_offers_from_html(html: str):
     return offers
 
 
+async def extract_offers_from_visible_cards(page: Page):
+    offers = []
+    cards = page.locator(".eva-3-card")
+    card_count = await cards.count()
+    total = min(card_count, MAX_OFFERS_PER_ROUTE)
+
+    for i in range(total):
+        text = await cards.nth(i).inner_text()
+        route_m = re.search(r"([A-Z]{3}\s*-\s*[A-Z]{3})", text or "")
+        date_m = re.search(r"(?:Seg|Ter|Qua|Qui|Sex|Sáb|Sab|Dom)\.\s*\d{1,2}\s+[a-zç]{3}\.\s+\d{4}", text or "", re.I)
+        price_m = re.search(r"R\$\s*([\d\.]+)", text or "")
+
+        route_text = route_m.group(1).strip() if route_m else ""
+        date_text = date_m.group(0).strip() if date_m else ""
+        price_text = price_m.group(1).strip() if price_m else ""
+
+        if route_text and date_text and price_text:
+            offers.append((route_text, date_text, price_text))
+
+    return offers
+
+
 def is_home_redirect(url: str) -> bool:
     parsed = urlparse(url or "")
     host = parsed.netloc.lower()
     path = (parsed.path or "/").rstrip("/")
     return host.endswith("viajanet.com.br") and path == ""
+
+
+def is_valid_route_url(url: str, origin: str, destination: str) -> bool:
+    parsed = urlparse(url or "")
+    host = parsed.netloc.lower()
+    path = (parsed.path or "").lower()
+    expected_prefix = f"/passagens-aereas/{origin.lower()}/{destination.lower()}"
+    return host.endswith("viajanet.com.br") and path.startswith(expected_prefix)
+
+
+async def load_route_with_retries(page: Page, origin: str, destination: str) -> Optional[str]:
+    urls = build_viajanet_url_variants(origin, destination)
+
+    for attempt in range(1, NAVIGATION_ATTEMPTS + 1):
+        for base_url in urls:
+            candidate_url = f"{base_url}&_ts={int(asyncio.get_event_loop().time() * 1000)}"
+
+            try:
+                await page.goto(candidate_url, wait_until="networkidle")
+            except Exception:
+                await page.goto(candidate_url, wait_until="domcontentloaded")
+
+            await page.wait_for_timeout(3500)
+            current_url = page.url
+
+            if is_home_redirect(current_url):
+                print(f"⚠️ [tentativa {attempt}] Redirect home: {current_url}")
+                continue
+
+            if is_valid_route_url(current_url, origin, destination):
+                html_len = len(await page.content())
+                print(f"ℹ️ [tentativa {attempt}] URL válida: {current_url} (HTML {html_len})")
+                return current_url
+
+            html_len = len(await page.content())
+            print(f"⚠️ [tentativa {attempt}] URL inesperada: {current_url} (HTML {html_len})")
+
+        await page.context.clear_cookies()
+        await page.goto("about:blank")
+
+    return None
 
 
 # ==========================
@@ -315,13 +389,10 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     print(f"\n🔎 Rota: {origin_hint}->{destination_hint}")
     print(f"URL: {urls[0]}")
 
-    await page.goto(url, wait_until="domcontentloaded")
-
-    current_url = page.url
-    if is_home_redirect(current_url):
-        print(f"⚠️ Rota inexistente (redirect para home): {current_url}")
+    url = await load_route_with_retries(page, origin_hint, destination_hint)
+    if not url:
+        print("⚠️ Não foi possível carregar página válida da rota após retries.")
         return 0
-
     # Alguns cenários abrem banner/overlay que atrapalha a renderização dos cards.
     # Tentamos fechar de forma defensiva sem quebrar a execução.
     close_button = page.get_by_role("button", name=re.compile(r"aceitar|entendi|fechar", re.I)).first
@@ -342,12 +413,17 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     if not has_results:
         print("⚠️ Timeout aguardando cards/preço; seguindo para checagem final do DOM.")
 
-    itineraries = await page.query_selector_all("favorite-card-flight-itinerary")
-    if not itineraries:
-        # fallback por HTML bruto (algumas execuções não materializam os custom elements no query_selector_all)
-        html = await page.content()
-        fallback_offers = extract_offers_from_html(html)
+    itinerary_locator = page.locator("favorite-card-flight-itinerary")
+    itinerary_count = await itinerary_locator.count()
+    if itinerary_count == 0:
+        # fallback por cards visíveis renderizados
+        fallback_offers = await extract_offers_from_visible_cards(page)
         if not fallback_offers:
+            # fallback por HTML bruto (algumas execuções não materializam os custom elements no query_selector_all)
+            html = await page.content()
+            fallback_offers = extract_offers_from_html(html)
+        if not fallback_offers:
+            html = await page.content()
             html_size = len(html or "")
             print(f"⚠️ Nenhum card encontrado. HTML recebido: {html_size} chars")
             return 0
@@ -374,11 +450,11 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
             insert_raw(origin, destination, dep_date, None, price_brl, payload)
             saved += 1
 
-        print(f"✅ Salvos via fallback HTML para {origin_hint}->{destination_hint}: {saved}")
+        print(f"✅ Salvos via fallback para {origin_hint}->{destination_hint}: {saved}")
         return saved
 
-    total = min(len(itineraries), MAX_OFFERS_PER_ROUTE)
-    print(f"Encontrados {len(itineraries)} cards (processando {total})")
+    total = min(itinerary_count, MAX_OFFERS_PER_ROUTE)
+    print(f"Encontrados {itinerary_count} cards (processando {total})")
 
     saved = 0
 
