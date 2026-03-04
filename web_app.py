@@ -103,7 +103,7 @@ DAYS_OFFER_ACTIVE = int(os.environ.get("DAYS_OFFER_ACTIVE", "3"))
 
 def _get_deals(deal_day=None, date_from=None, date_to=None, origin=None, destination=None, limit=50):
     """Lista promoções a partir da view daily_best_deals_ranked. Filtra por origin/destination quando informados.
-    Só retorna ofertas que ainda têm registro 'ativo' em flight_prices_raw (scraped_at nos últimos DAYS_OFFER_ACTIVE dias)."""
+    Se a coluna scraped_at existir, só retorna ofertas com raw 'ativo' (últimos DAYS_OFFER_ACTIVE dias)."""
     conn = psycopg2.connect(**main.DB_CONFIG)
     try:
         origin = (origin or "").strip().upper() or None
@@ -124,8 +124,12 @@ def _get_deals(deal_day=None, date_from=None, date_to=None, origin=None, destina
         if destination:
             where_parts.append("d.destination = %s")
             params.append(destination)
-        # Só ofertas que ainda têm raw “ativo” (scraped_at nos últimos N dias ou NULL)
-        where_parts.append("""
+        params.append(limit)
+        where_sql = " AND ".join(where_parts)
+
+        # Query completa (com filtro scraped_at e payload da raw)
+        where_with_active = where_parts[:-1]  # sem o limit
+        where_with_active.append("""
             EXISTS (
                 SELECT 1 FROM flight_prices_raw r2
                 WHERE r2.origin = d.origin AND r2.destination = d.destination
@@ -135,36 +139,66 @@ def _get_deals(deal_day=None, date_from=None, date_to=None, origin=None, destina
                   AND (r2.scraped_at IS NULL OR r2.scraped_at >= now() - (%s * interval '1 day'))
             )
         """.strip())
-        params.append(DAYS_OFFER_ACTIVE)
-        params.append(limit)
-        where_sql = " AND ".join(where_parts)
-        # Parâmetros: [date_from?, date_to? | deal_day? | nada], [origin?], [destination?], DAYS_OFFER_ACTIVE (EXISTS), DAYS_OFFER_ACTIVE (LATERAL), limit
-        params_with_lateral = params[:-1] + [DAYS_OFFER_ACTIVE, params[-1]]
+        params_full = params[:-1] + [DAYS_OFFER_ACTIVE, DAYS_OFFER_ACTIVE, params[-1]]
+        sql_full = """
+            SELECT d.source, d.origin, d.destination, d.departure_date, d.return_date,
+                   d.airline, d.price, d.currency, d.baseline_avg_30d, d.baseline_min_30d,
+                   d.drop_pct, d.score,
+                   COALESCE(raw.payload, d.payload) AS payload,
+                   d.deal_day, d.global_rank, d.route_rank
+            FROM daily_best_deals_ranked d
+            LEFT JOIN LATERAL (
+                SELECT r.payload
+                FROM flight_prices_raw r
+                WHERE r.origin = d.origin AND r.destination = d.destination
+                  AND r.departure_date = d.departure_date
+                  AND r.return_date IS NOT DISTINCT FROM d.return_date
+                  AND r.price = d.price AND r.source = d.source
+                  AND (r.scraped_at IS NULL OR r.scraped_at >= now() - (%s * interval '1 day'))
+                LIMIT 1
+            ) raw ON true
+            WHERE """ + " AND ".join(where_with_active) + """
+            ORDER BY d.global_rank
+            LIMIT %s
+        """
+        # Query fallback (sem scraped_at: para quando a coluna ainda não existe)
+        sql_fallback = """
+            SELECT d.source, d.origin, d.destination, d.departure_date, d.return_date,
+                   d.airline, d.price, d.currency, d.baseline_avg_30d, d.baseline_min_30d,
+                   d.drop_pct, d.score,
+                   COALESCE(raw.payload, d.payload) AS payload,
+                   d.deal_day, d.global_rank, d.route_rank
+            FROM daily_best_deals_ranked d
+            LEFT JOIN LATERAL (
+                SELECT r.payload
+                FROM flight_prices_raw r
+                WHERE r.origin = d.origin AND r.destination = d.destination
+                  AND r.departure_date = d.departure_date
+                  AND r.return_date IS NOT DISTINCT FROM d.return_date
+                  AND r.price = d.price AND r.source = d.source
+                LIMIT 1
+            ) raw ON true
+            WHERE """ + where_sql + """
+            ORDER BY d.global_rank
+            LIMIT %s
+        """
+
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT d.source, d.origin, d.destination, d.departure_date, d.return_date,
-                       d.airline, d.price, d.currency, d.baseline_avg_30d, d.baseline_min_30d,
-                       d.drop_pct, d.score,
-                       COALESCE(raw.payload, d.payload) AS payload,
-                       d.deal_day, d.global_rank, d.route_rank
-                FROM daily_best_deals_ranked d
-                LEFT JOIN LATERAL (
-                    SELECT r.payload
-                    FROM flight_prices_raw r
-                    WHERE r.origin = d.origin AND r.destination = d.destination
-                      AND r.departure_date = d.departure_date
-                      AND r.return_date IS NOT DISTINCT FROM d.return_date
-                      AND r.price = d.price AND r.source = d.source
-                      AND (r.scraped_at IS NULL OR r.scraped_at >= now() - (%s * interval '1 day'))
-                    LIMIT 1
-                ) raw ON true
-                WHERE """ + where_sql + """
-                ORDER BY d.global_rank
-                LIMIT %s
-                """,
-                params_with_lateral,
-            )
+            err = None
+            try:
+                cur.execute(sql_full, params_full)
+            except Exception as e:
+                err = e
+                conn.rollback()
+                # Fallback: query sem scraped_at (coluna ou view pode não existir)
+                try:
+                    cur.execute(sql_fallback, params)
+                except Exception as e2:
+                    print(">>> [web_app] Erro ao buscar deals (query completa):", err, file=sys.stderr)
+                    print(">>> [web_app] Erro no fallback:", e2, file=sys.stderr)
+                    raise e2
+            if err:
+                print(">>> [web_app] Usando query fallback (sem scraped_at). Erro anterior:", err, file=sys.stderr)
             rows = cur.fetchall()
             cols = [d[0] for d in cur.description]
             return [dict(zip(cols, r)) for r in rows]
@@ -238,6 +272,9 @@ def api_deals():
             )
         return jsonify(_serialize(deals))
     except Exception as e:
+        print(">>> [web_app] /api/deals erro:", e, file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         return jsonify({"error": str(e)}), 500
 
 

@@ -2,6 +2,7 @@ import asyncio
 import json
 import random
 import re
+import sys
 from datetime import date
 from urllib.parse import urlparse
 from typing import Optional, Tuple, List
@@ -580,10 +581,47 @@ def run_opportunities_engine() -> None:
     generate_opportunities(db_config=DB_CONFIG, source=None)
 
 
+def run_one_cycle() -> None:
+    """Uma volta completa: scraping ViajaNet + motor de oportunidades."""
+    asyncio.run(run_batch())
+    run_opportunities_engine()
+
+
 def main() -> None:
+    import time
+    service_mode = "--service" in sys.argv
+    interval_minutes = 60
+    if "--interval" in sys.argv:
+        try:
+            i = sys.argv.index("--interval")
+            if i + 1 < len(sys.argv):
+                interval_minutes = max(1, int(sys.argv[i + 1]))
+        except (ValueError, IndexError):
+            pass
+
+    if service_mode:
+        print("======================================")
+        print(">>> Serviço de scraping (ViajaNet)")
+        print(">>> Reexecutando a cada", interval_minutes, "minuto(s). Ctrl+C para parar.")
+        print("======================================\n")
+        cycle = 0
+        try:
+            while True:
+                cycle += 1
+                print("\n" + "=" * 60)
+                print(f">>> Ciclo {cycle} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                print("=" * 60)
+                run_one_cycle()
+                print(f"\n>>> Próximo ciclo em {interval_minutes} minuto(s)...")
+                time.sleep(interval_minutes * 60)
+        except KeyboardInterrupt:
+            print("\n>>> Encerrando serviço de scraping.")
+        return
+
     print("Escolha o modo de execução:")
     print("  1) Scraping + motor de oportunidades")
     print("  2) Apenas motor de oportunidades")
+    print("  (Use --service para rodar em loop contínuo)")
     try:
         choice = input("Opção (1 ou 2): ").strip() or "1"
     except EOFError:
@@ -591,9 +629,7 @@ def main() -> None:
     if choice == "2":
         run_opportunities_engine()
         return
-    # Opção 1 ou padrão: scraping e depois motor de oportunidades
-    asyncio.run(run_batch())
-    run_opportunities_engine()
+    run_one_cycle()
 
 
 if __name__ == "__main__":

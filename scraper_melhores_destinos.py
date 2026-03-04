@@ -484,23 +484,8 @@ def run_once(page, max_promos: Optional[int] = None) -> int:
     return total_saved
 
 
-def main():
-    max_promos = None
-    if "--max" in sys.argv:
-        try:
-            i = sys.argv.index("--max")
-            if i + 1 < len(sys.argv):
-                max_promos = int(sys.argv[i + 1])
-        except (ValueError, IndexError):
-            pass
-
-    print("======================================")
-    print(">>> Motor Melhores Destinos")
-    print("======================================")
-    if max_promos:
-        print(f">>> Limite: {max_promos} promoções")
-    print(">>> Use --max N para limitar a N promoções.\n")
-
+def run_one_cycle(max_promos=None):
+    """Uma varredura completa: browser abre, extrai ofertas, fecha."""
     with sync_playwright() as p:
         print(">>> Iniciando browser...")
         browser = p.chromium.launch(headless=False)
@@ -514,7 +499,57 @@ def main():
         finally:
             print(">>> Fechando browser...")
             browser.close()
+    return saved
 
+
+def main():
+    import time
+    max_promos = None
+    if "--max" in sys.argv:
+        try:
+            i = sys.argv.index("--max")
+            if i + 1 < len(sys.argv):
+                max_promos = int(sys.argv[i + 1])
+        except (ValueError, IndexError):
+            pass
+
+    service_mode = "--service" in sys.argv
+    interval_minutes = 60
+    if "--interval" in sys.argv:
+        try:
+            i = sys.argv.index("--interval")
+            if i + 1 < len(sys.argv):
+                interval_minutes = max(1, int(sys.argv[i + 1]))
+        except (ValueError, IndexError):
+            pass
+
+    print("======================================")
+    print(">>> Motor Melhores Destinos")
+    print("======================================")
+    if max_promos:
+        print(f">>> Limite: {max_promos} promoções")
+    if service_mode:
+        print(">>> Modo serviço: reexecutando a cada", interval_minutes, "minuto(s). Ctrl+C para parar.")
+    else:
+        print(">>> Use --max N para limitar a N promoções. Use --service para rodar em loop.")
+    print()
+
+    if service_mode:
+        cycle = 0
+        try:
+            while True:
+                cycle += 1
+                print("\n" + "=" * 60)
+                print(f">>> Ciclo {cycle} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
+                print("=" * 60)
+                run_one_cycle(max_promos=max_promos)
+                print(f"\n>>> Próximo ciclo em {interval_minutes} minuto(s)...")
+                time.sleep(interval_minutes * 60)
+        except KeyboardInterrupt:
+            print("\n>>> Encerrando serviço Melhores Destinos.")
+        return
+
+    run_one_cycle(max_promos=max_promos)
     print(">>> Script finalizado.")
 
 
