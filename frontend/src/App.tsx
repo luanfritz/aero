@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { fetchDeals, fetchOriginsDestinations } from './api'
+import { fetchOpportunities, fetchOriginsDestinations } from './api'
 import type { Offer, RouteWithOffers, AirportOption } from './types'
 import { parseAirportInput, parseDateOnly, parseMonthInput } from './utils'
 import { Header } from './components/Header'
@@ -64,13 +64,7 @@ function App() {
   function loadDeals() {
     setUiState('loading')
     setErrorMsg('')
-    const originParam = parseAirportInput(origin)
-    const destParam = parseAirportInput(destination)
-    fetchDeals({
-      origin: originParam || undefined,
-      destination: destParam || undefined,
-      limit: 200,
-    })
+    fetchOpportunities()
       .then((data) => {
         setAllOpportunities(data)
         if (data.length === 0) setUiState('empty')

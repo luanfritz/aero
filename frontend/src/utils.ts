@@ -72,6 +72,7 @@ export function getOfferUrl(offer: {
   return_date?: string | null
   url?: string
 }): string {
+  if (offer.url && offer.url.startsWith('http')) return offer.url
   const src = (offer.source || '').toLowerCase()
   const isOneway = !offer.return_date
   if (src === 'viajanet' && isOneway && offer.departure_date) {
