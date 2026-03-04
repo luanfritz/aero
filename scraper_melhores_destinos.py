@@ -513,7 +513,8 @@ def main():
         except (ValueError, IndexError):
             pass
 
-    service_mode = "--service" in sys.argv
+    # Padrão: modo serviço (loop). Use --once para rodar uma vez e sair.
+    run_once_only = "--once" in sys.argv
     interval_minutes = 60
     if "--interval" in sys.argv:
         try:
@@ -527,30 +528,31 @@ def main():
     print(">>> Motor Melhores Destinos")
     print("======================================")
     if max_promos:
-        print(f">>> Limite: {max_promos} promoções")
-    if service_mode:
-        print(">>> Modo serviço: reexecutando a cada", interval_minutes, "minuto(s). Ctrl+C para parar.")
+        print(f">>> Limite: {max_promos} promoções por ciclo")
+    if run_once_only:
+        print(">>> Modo: uma varredura e encerra (--once).")
     else:
-        print(">>> Use --max N para limitar a N promoções. Use --service para rodar em loop.")
+        print(">>> Modo serviço: reexecutando a cada", interval_minutes, "minuto(s). Ctrl+C para parar.")
+        print(">>> Use --once para rodar uma vez e sair. Use --interval N para intervalo em minutos.")
     print()
 
-    if service_mode:
-        cycle = 0
-        try:
-            while True:
-                cycle += 1
-                print("\n" + "=" * 60)
-                print(f">>> Ciclo {cycle} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
-                print("=" * 60)
-                run_one_cycle(max_promos=max_promos)
-                print(f"\n>>> Próximo ciclo em {interval_minutes} minuto(s)...")
-                time.sleep(interval_minutes * 60)
-        except KeyboardInterrupt:
-            print("\n>>> Encerrando serviço Melhores Destinos.")
+    if run_once_only:
+        run_one_cycle(max_promos=max_promos)
+        print(">>> Script finalizado.")
         return
 
-    run_one_cycle(max_promos=max_promos)
-    print(">>> Script finalizado.")
+    cycle = 0
+    try:
+        while True:
+            cycle += 1
+            print("\n" + "=" * 60)
+            print(f">>> Ciclo {cycle} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
+            print("=" * 60)
+            run_one_cycle(max_promos=max_promos)
+            print(f"\n>>> Próximo ciclo em {interval_minutes} minuto(s)...")
+            time.sleep(interval_minutes * 60)
+    except KeyboardInterrupt:
+        print("\n>>> Encerrando serviço Melhores Destinos.")
 
 
 if __name__ == "__main__":
