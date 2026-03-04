@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 API e frontend para consulta de voos e promoções (flight_prices_raw).
+Frontend: Vite + React (frontend/). Build em frontend/dist.
 Rode: python web_app.py  ->  http://localhost:5000
 """
 import json
@@ -11,15 +12,30 @@ from datetime import date, datetime
 # Garante que o diretório do projeto está no path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, send_from_directory, Response
 from flask_cors import CORS
 import psycopg2
 
 import main
 from opportunities_engine import generate_opportunities, build_search_url
 
-app = Flask(__name__, static_folder="web", static_url_path="")
+# Frontend único: build Vite + React em frontend/dist
+_static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
+_HAS_BUILD = os.path.isdir(_static_dir) and os.path.isfile(os.path.join(_static_dir, "index.html"))
+app = Flask(__name__, static_folder=_static_dir, static_url_path="")
 CORS(app)
+
+_HTML_BUILD_FIRST = """<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ScrapeAero – Build do frontend</title></head>
+<body style="font-family:sans-serif;max-width:520px;margin:3rem auto;padding:1rem;background:#0a0e14;color:#e6edf3;">
+<h1>Frontend não encontrado</h1>
+<p>O frontend é Vite + React. Gere o build e reinicie:</p>
+<pre style="background:#1e293b;padding:1rem;border-radius:8px;overflow:auto;">cd frontend
+npm install
+npm run build</pre>
+<p>Depois acesse <a href="/" style="color:#38bdf8;">/</a> novamente. A <a href="/api/deals" style="color:#38bdf8;">API</a> já está disponível.</p>
+</body></html>"""
 
 
 def _serialize(obj):
@@ -29,6 +45,8 @@ def _serialize(obj):
         return {k: _serialize(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_serialize(x) for x in obj]
+    if hasattr(obj, "__float__"):  # Decimal e similares
+        return float(obj)
     return obj
 
 
@@ -297,7 +315,9 @@ def api_opportunities():
 
 @app.route("/")
 def index():
-    return send_from_directory(app.static_folder, "index.html")
+    if _HAS_BUILD:
+        return send_from_directory(app.static_folder, "index.html")
+    return Response(_HTML_BUILD_FIRST, mimetype="text/html; charset=utf-8")
 
 
 @app.route("/favicon.ico")
@@ -308,9 +328,14 @@ def favicon():
 
 @app.route("/<path:path>")
 def static_files(path):
-    return send_from_directory(app.static_folder, path)
+    if _HAS_BUILD:
+        return send_from_directory(app.static_folder, path)
+    return Response(_HTML_BUILD_FIRST, mimetype="text/html; charset=utf-8")
 
 
 if __name__ == "__main__":
-    print(">>> Frontend: http://localhost:5000")
+    print(">>> ScrapeAero – API + frontend (Vite + React)")
+    print(">>> http://localhost:5000")
+    if not _HAS_BUILD:
+        print(">>> AVISO: frontend/dist não encontrado. Rode: cd frontend && npm install && npm run build")
     app.run(host="0.0.0.0", port=5000, debug=True)
