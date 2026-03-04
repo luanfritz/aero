@@ -49,7 +49,7 @@ ROUTE_SPAN = "[class*='produtoIdaVolta_section_span_texto__idaVolta']"
 PRICE_SPAN = "[class*='produtoIdaVolta_section_preco']"
 
 # Códigos que devem ser normalizados para IATA (ex.: RIO -> GIG)
-AIRPORT_CODE_NORMALIZE = {"RIO": "GIG", "SAO": "GRU", "BHZ": "CNF"}
+AIRPORT_CODE_NORMALIZE = {"RIO": "GIG", "SAO": "GRU", "BHZ": "CNF", "MIL": "MXP"}
 
 
 def normalize_airport_code(code: str) -> str:
