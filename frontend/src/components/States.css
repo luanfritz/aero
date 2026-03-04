@@ -1,0 +1,31 @@
+.state {
+  text-align: center;
+  padding: var(--space-2xl) var(--space-lg);
+  color: var(--text-muted);
+  font-size: var(--text-body);
+}
+
+.state-loading .spinner {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto var(--space-lg);
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.state-empty .state-hint {
+  font-size: var(--text-body);
+  margin-top: var(--space-sm);
+}
+
+.state-error {
+  color: #b91c1c;
+}

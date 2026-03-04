@@ -1,0 +1,164 @@
+.highlight-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 220px;
+  padding: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+  position: relative;
+  cursor: pointer;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+a.highlight-card:hover {
+  text-decoration: none;
+  color: inherit;
+}
+
+.highlight-card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-hover);
+  transform: translateY(-2px);
+}
+
+.highlight-card-top {
+  padding: var(--card-pad) var(--card-pad) var(--space-md);
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(0, 166, 80, 0.04) 0%, transparent 100%);
+}
+
+.highlight-card-badge {
+  display: inline-block;
+  font-size: var(--text-label);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: var(--space-md);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+}
+
+/* Nível 1: Oferta – verde verdade */
+.highlight-card-badge--level-1 {
+  color: #047857;
+  background: rgba(0, 166, 80, 0.15);
+}
+
+/* Nível 2: Boa oferta – verde limão */
+.highlight-card-badge--level-2 {
+  color: #65a30d;
+  background: rgba(101, 163, 13, 0.18);
+}
+
+/* Nível 3: Ótima oferta – amarelo */
+.highlight-card-badge--level-3 {
+  color: #a16207;
+  background: rgba(234, 179, 8, 0.2);
+}
+
+/* Nível 4: Imperdível – laranja */
+.highlight-card-badge--level-4 {
+  color: #c2410c;
+  background: rgba(234, 88, 12, 0.2);
+}
+
+/* Nível 5: Imbatível 🔥 – vermelho */
+.highlight-card-badge--level-5 {
+  color: #fff;
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+}
+
+.highlight-card-route-label {
+  font-size: var(--text-label);
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: var(--space-xs);
+  letter-spacing: 0.02em;
+}
+
+.highlight-card-route {
+  font-weight: var(--font-weight-title);
+  font-size: var(--text-title);
+  letter-spacing: -0.01em;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.highlight-card-arrow {
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0 var(--space-xs);
+}
+
+.highlight-card-type {
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+  margin-top: var(--space-xs);
+}
+
+.highlight-card-date {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--text-meta);
+  color: var(--text-muted);
+  padding: var(--space-md) var(--card-pad) 0;
+}
+
+.highlight-card-date-icon {
+  opacity: 0.85;
+  flex-shrink: 0;
+}
+
+.highlight-card-bottom {
+  padding: var(--card-pad);
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.highlight-card-price-label {
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.highlight-card-price {
+  font-size: var(--text-price);
+  font-weight: var(--font-weight-price);
+  color: var(--text);
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+
+.highlight-card-source {
+  font-size: var(--text-label);
+  color: var(--text-muted);
+}
+
+.highlight-card-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-sm) var(--space-lg);
+  background: var(--cta);
+  color: #fff;
+  font-size: var(--text-body);
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  text-align: center;
+  transition: background 0.2s;
+  margin-top: var(--space-xs);
+}
+
+a.highlight-card:hover .highlight-card-cta {
+  background: var(--cta-hover);
+}
