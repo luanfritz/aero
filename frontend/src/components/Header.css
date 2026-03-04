@@ -16,6 +16,7 @@
   text-decoration: none;
   color: inherit;
   transition: opacity 0.2s;
+  background: transparent;
 }
 
 .header-brand:hover {
@@ -28,6 +29,7 @@
   width: auto;
   object-fit: contain;
   object-position: left center;
+  background: transparent;
 }
 
 @media (min-width: 480px) {
