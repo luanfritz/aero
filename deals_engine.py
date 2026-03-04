@@ -9,6 +9,8 @@ Para cada oferta recente, calcula:
 
 deal_day = data do dia (America/Sao_Paulo). O índice único evita duplicar a mesma oferta no mesmo dia.
 """
+import sys
+import time
 from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
@@ -27,7 +29,8 @@ DEFAULT_DB_CONFIG = {
 }
 
 BASELINE_DAYS = 30
-CANDIDATES_DAYS = 14
+# Só entram no ranking ofertas capturadas nas últimas N horas
+CANDIDATES_HOURS = 54
 TIMEZONE = "America/Sao_Paulo"
 
 
@@ -59,8 +62,8 @@ def _get_baselines(conn, baseline_days: int = BASELINE_DAYS) -> Dict[tuple, Dict
     return out
 
 
-def _get_candidates(conn, candidates_days: int = CANDIDATES_DAYS) -> List[Dict[str, Any]]:
-    """Ofertas recentes que entram no ranking do dia."""
+def _get_candidates(conn, candidates_hours: int = CANDIDATES_HOURS) -> List[Dict[str, Any]]:
+    """Ofertas capturadas nas últimas N horas que entram no ranking do dia."""
     sql = """
     SELECT
         fp.source,
@@ -72,12 +75,12 @@ def _get_candidates(conn, candidates_days: int = CANDIDATES_DAYS) -> List[Dict[s
         NULL::jsonb AS payload
     FROM flight_prices fp
     JOIN routes r ON r.id = fp.route_id
-    WHERE (fp.scraped_at >= now() - (%s * interval '1 day') OR fp.scraped_at IS NULL)
+    WHERE fp.scraped_at >= now() - (%s * interval '1 hour')
       AND fp.price_brl > 0
     ORDER BY fp.source, r.origin, r.destination, fp.departure_date, fp.price_brl
     """
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        cur.execute(sql, (candidates_days,))
+        cur.execute(sql, (candidates_hours,))
         return [dict(r) for r in cur.fetchall()]
 
 
@@ -96,11 +99,12 @@ def _compute_score(price: int, baseline_avg: Optional[Decimal], baseline_min: Op
 def refresh_deals_today(
     db_config: Optional[Dict[str, Any]] = None,
     baseline_days: int = BASELINE_DAYS,
-    candidates_days: int = CANDIDATES_DAYS,
+    candidates_hours: int = CANDIDATES_HOURS,
     silent: bool = False,
 ) -> int:
     """
     Popula/atualiza a tabela deals para o dia atual (deal_day em America/Sao_Paulo).
+    Só considera ofertas capturadas nas últimas candidates_hours horas.
     Retorna quantidade de linhas inseridas ou atualizadas.
     """
     config = db_config or DEFAULT_DB_CONFIG
@@ -109,10 +113,10 @@ def refresh_deals_today(
 
     try:
         baselines = _get_baselines(conn, baseline_days)
-        candidates = _get_candidates(conn, candidates_days)
+        candidates = _get_candidates(conn, candidates_hours)
 
         if not silent:
-            print(f">>> Deals: {len(candidates)} candidatos, {len(baselines)} rotas com baseline (30d)")
+            print(f">>> Deals: {len(candidates)} candidatos (últimas {candidates_hours}h), {len(baselines)} rotas com baseline (30d)")
 
         with conn.cursor() as cur:
             cur.execute(
@@ -190,6 +194,32 @@ def refresh_deals_today(
 
 
 if __name__ == "__main__":
-    import sys
     silent = "--silent" in sys.argv
-    refresh_deals_today(silent=silent)
+    run_once = "--once" in sys.argv
+    interval_minutes = 60
+    if "--interval" in sys.argv:
+        try:
+            i = sys.argv.index("--interval")
+            if i + 1 < len(sys.argv):
+                interval_minutes = max(1, int(sys.argv[i + 1]))
+        except (ValueError, IndexError):
+            pass
+
+    if run_once:
+        refresh_deals_today(silent=silent)
+        sys.exit(0)
+
+    print("======================================")
+    print(">>> Deals engine (serviço)")
+    print(">>> Candidatos: voos das últimas", CANDIDATES_HOURS, "horas")
+    print(">>> Reexecutando a cada", interval_minutes, "minuto(s). Ctrl+C para parar.")
+    print(">>> Use --once para rodar uma vez e sair.")
+    print("======================================\n")
+
+    try:
+        while True:
+            refresh_deals_today(silent=silent)
+            print(f"\n>>> Próxima execução em {interval_minutes} minuto(s)...")
+            time.sleep(interval_minutes * 60)
+    except KeyboardInterrupt:
+        print("\n>>> Deals engine encerrado.")
