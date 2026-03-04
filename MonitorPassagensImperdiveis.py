@@ -4,7 +4,7 @@ Monitor Passagens Imperdíveis: lista todas as promoções, abre cada link,
 expande os acordeões e extrai ofertas de voo (ida/volta, preço), cadastrando
 na base com fonte "passagens_imperdiveis".
 
-Modo serviço: varredura a cada SCAN_INTERVAL_MINUTES; ignora promoções já
+Modo serviço: varredura a cada SCAN_INTERVAL_MINUTES; ignora promoções já al
 cadastradas (com registros em flight_prices_raw para essa promo_url).
 """
 import json
