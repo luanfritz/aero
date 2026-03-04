@@ -461,6 +461,7 @@
           '<div class="offer-row offer-header">' +
           '<span class="offer-source">Fornecedor</span>' +
           '<span class="offer-date">Data partida</span>' +
+          '<span class="offer-return-date">Data retorno</span>' +
           '<span class="offer-price">Preço</span>' +
           '<span class="offer-link-cell">Ver oferta</span>' +
           '</div>' +
@@ -480,6 +481,7 @@
             }
             return offer.url || "#";
           })();
+          var returnDateStr = offer.return_date ? formatDate(offer.return_date) : "";
           const row = document.createElement("div");
           row.className = "offer-row";
           row.innerHTML =
@@ -491,6 +493,7 @@
             '<span class="offer-date">' +
             formatDate(offer.departure_date) +
             "</span>" +
+            '<span class="offer-return-date">' + escapeHtml(returnDateStr) + "</span>" +
             '<span class="offer-price">' +
             formatPrice(offer.price) +
             "</span>" +
@@ -526,6 +529,7 @@
           '<div class="offer-row offer-header">' +
           '<span class="offer-source">Fornecedor</span>' +
           '<span class="offer-date">Data partida</span>' +
+          '<span class="offer-return-date">Data retorno</span>' +
           '<span class="offer-price">Preço</span>' +
           '<span class="offer-link-cell">Ver oferta</span>' +
           '</div>' +
@@ -545,6 +549,7 @@
             }
             return offer.url || "#";
           })();
+          var returnDateStr = offer.return_date ? formatDate(offer.return_date) : "";
           const row = document.createElement("div");
           row.className = "offer-row";
           row.innerHTML =
@@ -556,6 +561,7 @@
             '<span class="offer-date">' +
             formatDate(offer.departure_date) +
             "</span>" +
+            '<span class="offer-return-date">' + escapeHtml(returnDateStr) + "</span>" +
             '<span class="offer-price">' +
             formatPrice(offer.price) +
             "</span>" +
@@ -738,8 +744,22 @@
   updatePeriodMonthVisibility();
   if (monthPickerTrigger) monthPickerTrigger.textContent = getMonthTriggerLabel();
 
-  if (filterDateFrom) filterDateFrom.addEventListener("change", function () { render(allOpportunities); });
-  if (filterDateTo) filterDateTo.addEventListener("change", function () { render(allOpportunities); });
+  function updatePeriodInputMask() {
+    [filterDateFrom, filterDateTo].forEach(function (input) {
+      if (!input) return;
+      if (input.value) input.classList.add("period-has-value");
+      else input.classList.remove("period-has-value");
+    });
+  }
+  if (filterDateFrom) {
+    filterDateFrom.addEventListener("change", function () { updatePeriodInputMask(); render(allOpportunities); });
+    filterDateFrom.addEventListener("input", updatePeriodInputMask);
+  }
+  if (filterDateTo) {
+    filterDateTo.addEventListener("change", function () { updatePeriodInputMask(); render(allOpportunities); });
+    filterDateTo.addEventListener("input", updatePeriodInputMask);
+  }
+  updatePeriodInputMask();
 
   btnRefresh.addEventListener("click", load);
   filterOrigin.addEventListener("input", function () { render(allOpportunities); });

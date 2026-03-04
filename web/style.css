@@ -217,6 +217,17 @@ body {
   min-width: 130px;
 }
 
+/* Oculta a máscara (placeholder dd/mm/aaaa) dos campos de data quando vazios */
+.filter-period-inputs input[type="date"]:not(.period-has-value)::-webkit-datetime-edit {
+  color: var(--bg-input);
+}
+.filter-period-inputs input[type="date"].period-has-value::-webkit-datetime-edit {
+  color: var(--text);
+}
+.filter-period-inputs input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 1;
+}
+
 .filter-period-sep {
   font-size: 0.85rem;
   color: var(--text-muted);
@@ -626,7 +637,7 @@ a.highlight-card:hover {
 .offers {
   padding: 0.75rem 1.25rem 1rem;
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(110px, auto) minmax(90px, auto) minmax(6rem, auto);
+  grid-template-columns: minmax(140px, 1fr) minmax(110px, auto) minmax(110px, auto) minmax(90px, auto) minmax(6rem, auto);
   gap: 0 1rem;
   align-items: center;
 }
@@ -656,6 +667,7 @@ a.highlight-card:hover {
 
 .offer-row.offer-header .offer-source,
 .offer-row.offer-header .offer-date,
+.offer-row.offer-header .offer-return-date,
 .offer-row.offer-header .offer-price {
   color: var(--text-muted);
 }
@@ -696,7 +708,8 @@ a.highlight-card:hover {
   color: var(--text-muted);
 }
 
-.offer-date {
+.offer-date,
+.offer-return-date {
   color: var(--text-muted);
   font-size: 0.9rem;
 }
@@ -758,7 +771,7 @@ a.highlight-card:hover {
   }
 
   .offers {
-    grid-template-columns: minmax(100px, 1fr) minmax(90px, auto) minmax(70px, auto) minmax(5rem, auto);
+    grid-template-columns: minmax(100px, 1fr) minmax(85px, auto) minmax(85px, auto) minmax(70px, auto) minmax(5rem, auto);
     gap: 0 0.5rem;
     font-size: 0.9rem;
   }
