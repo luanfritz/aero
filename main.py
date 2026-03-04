@@ -198,6 +198,17 @@ def parse_price_to_int(price_text: str) -> int:
     return int(digits) if digits else 0
 
 
+# Códigos que alguns sites mostram mas devem ser normalizados para IATA (ex.: RIO -> GIG)
+AIRPORT_CODE_NORMALIZE = {"RIO": "GIG", "SAO": "GRU", "BHZ": "CNF"}
+
+
+def normalize_airport_code(code: str) -> str:
+    """Retorna o código IATA normalizado (ex.: RIO -> GIG)."""
+    if not code or not (code := (code or "").strip().upper()):
+        return code
+    return AIRPORT_CODE_NORMALIZE.get(code, code)
+
+
 def parse_route(route_text: str) -> Tuple[Optional[str], Optional[str]]:
     m = re.search(r"\b([A-Z]{3})\s*-\s*([A-Z]{3})\b", route_text or "")
     if not m:
@@ -453,7 +464,9 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
                 "destination_hint": destination_hint,
                 "extraction_mode": "html_fallback",
             }
-            insert_raw(origin, destination, dep_date, None, price_brl, payload)
+            origin_n = normalize_airport_code(origin)
+            dest_n = normalize_airport_code(destination)
+            insert_raw(origin_n, dest_n, dep_date, None, price_brl, payload)
             saved += 1
 
         print(f"✅ Salvos via fallback para {origin_hint}->{destination_hint}: {saved}")
@@ -523,7 +536,9 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
             "destination_hint": destination_hint,
         }
 
-        insert_raw(origin, destination, dep_date, ret_date, price_brl, payload)
+        origin_n = normalize_airport_code(origin)
+        dest_n = normalize_airport_code(destination)
+        insert_raw(origin_n, dest_n, dep_date, ret_date, price_brl, payload)
         saved += 1
 
     print(f"✅ Salvos (raw) para {origin_hint}->{destination_hint}: {saved}")

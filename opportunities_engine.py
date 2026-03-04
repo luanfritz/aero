@@ -39,9 +39,28 @@ def build_search_url(
     destination: str,
     source: str = DEFAULT_SOURCE,
     payload: Optional[Dict[str, Any]] = None,
+    departure_date: Optional[Any] = None,
+    return_date: Optional[Any] = None,
 ) -> str:
     """Link para a página de busca da fonte para a rota."""
     if source and source.lower() == "viajanet":
+        o = (origin or "").strip().upper()
+        d = (destination or "").strip().upper()
+        if not o or not d:
+            return f"https://www.viajanet.com.br/passagens-aereas/{origin.lower()}/{destination.lower()}/?from=SB&di=1&reSearch=true"
+        if not return_date and departure_date:
+            try:
+                if hasattr(departure_date, "isoformat"):
+                    date_str = departure_date.isoformat()
+                else:
+                    date_str = str(departure_date)[:10]
+                if len(date_str) >= 10 and date_str[4] == "-" and date_str[7] == "-":
+                    return (
+                        f"https://www.viajanet.com.br/shop/flights/results/oneway/"
+                        f"{o}/{d}/{date_str}/1/0/0?from=SB&di=1&reSearch=true"
+                    )
+            except (TypeError, AttributeError, IndexError):
+                pass
         return (
             f"https://www.viajanet.com.br/passagens-aereas/"
             f"{origin.lower()}/{destination.lower()}/?from=SB&di=1&reSearch=true"
@@ -50,6 +69,13 @@ def build_search_url(
         return str(payload.get("promo_url", ""))
     if source and source.lower() == "passagens_imperdiveis":
         return "https://passagensimperdiveis.com.br/promocoes-recentes/"
+    if source and source.lower() == "melhores_destinos":
+        if payload:
+            if payload.get("ver_voos_url"):
+                return str(payload.get("ver_voos_url", ""))
+            if payload.get("promo_url"):
+                return str(payload.get("promo_url", ""))
+        return "https://www.melhoresdestinos.com.br/promocoes-passagens"
     return f"# rota {origin}-{destination} (fonte: {source or '?'})"
 
 

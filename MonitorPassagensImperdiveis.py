@@ -48,6 +48,16 @@ SECTION_DATA = "[class*='produtoIdaVolta_section_data']"
 ROUTE_SPAN = "[class*='produtoIdaVolta_section_span_texto__idaVolta']"
 PRICE_SPAN = "[class*='produtoIdaVolta_section_preco']"
 
+# Códigos que devem ser normalizados para IATA (ex.: RIO -> GIG)
+AIRPORT_CODE_NORMALIZE = {"RIO": "GIG", "SAO": "GRU", "BHZ": "CNF"}
+
+
+def normalize_airport_code(code: str) -> str:
+    """Retorna o código IATA normalizado (ex.: RIO -> GIG)."""
+    if not code or not (code := (code or "").strip().upper()):
+        return code or ""
+    return AIRPORT_CODE_NORMALIZE.get(code, code)
+
 
 def insert_raw(
     origin: str,
@@ -269,9 +279,11 @@ def run_once(page) -> int:
                     "price_text": f.get("price_text", ""),
                     "source": SOURCE_NAME,
                 }
+                origin_n = normalize_airport_code(f["origin"])
+                dest_n = normalize_airport_code(f["destination"])
                 insert_raw(
-                    f["origin"],
-                    f["destination"],
+                    origin_n,
+                    dest_n,
                     f["departure_date"],
                     f.get("return_date"),
                     f["price"],
@@ -316,9 +328,11 @@ def run_once_single_url(page, url: str) -> int:
             "price_text": f.get("price_text", ""),
             "source": SOURCE_NAME,
         }
+        origin_n = normalize_airport_code(f["origin"])
+        dest_n = normalize_airport_code(f["destination"])
         insert_raw(
-            f["origin"],
-            f["destination"],
+            origin_n,
+            dest_n,
             f["departure_date"],
             f.get("return_date"),
             f["price"],
