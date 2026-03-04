@@ -11,18 +11,6 @@ from playwright.async_api import async_playwright, Page, TimeoutError as Playwri
 
 from opportunities_engine import generate_opportunities
 
-<<<<<<< HEAD
-=======
-from opportunities_engine import generate_opportunities
-
-from opportunities_engine import generate_opportunities
-
-from opportunities_engine import generate_opportunities
-
-from opportunities_engine import generate_opportunities
-
->>>>>>> 9a87c2c507f399c8fa45b1db0079a9a1cc6a2ab6
-
 # ==========================
 # CONFIG
 # ==========================
