@@ -1,0 +1,164 @@
+.route-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 0.2s;
+}
+
+.route-card:hover {
+  box-shadow: var(--shadow-hover);
+}
+
+.route-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  padding: var(--card-pad);
+  background: linear-gradient(180deg, rgba(0, 166, 80, 0.06) 0%, transparent 100%);
+  border-bottom: 1px solid var(--border);
+}
+
+.route-route {
+  font-weight: var(--font-weight-title);
+  font-size: var(--text-title);
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.route-route span {
+  color: var(--accent);
+  font-weight: 600;
+  margin: 0 var(--space-xs);
+}
+
+.route-min-price {
+  font-size: var(--text-price-sm);
+  font-weight: var(--font-weight-price);
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+
+.offers {
+  padding: 0 var(--card-pad) var(--card-pad);
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(100px, auto) minmax(100px, auto) minmax(90px, auto) minmax(7rem, auto);
+  gap: 0 var(--space-xl);
+  align-items: center;
+}
+
+.offer-row {
+  display: contents;
+}
+
+.offer-row > * {
+  padding: var(--space-md) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-body);
+}
+
+.offer-row:last-child > * {
+  border-bottom: none;
+}
+
+.offer-row.offer-header > * {
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-label);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.offers .offer-link-cell,
+.offers .offer-link {
+  justify-self: end;
+  text-align: right;
+}
+
+.offer-source {
+  font-size: var(--text-label);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  display: inline-block;
+}
+
+.offer-source.viajanet {
+  background: rgba(0, 166, 80, 0.12);
+  color: var(--source-viaja);
+}
+
+.offer-source.passagens_imperdiveis {
+  background: rgba(234, 88, 12, 0.12);
+  color: var(--source-pi);
+}
+
+.offer-source.melhores_destinos {
+  background: rgba(2, 132, 199, 0.12);
+  color: var(--source-melhores);
+}
+
+.offer-source:not(.viajanet):not(.passagens_imperdiveis):not(.melhores_destinos) {
+  background: rgba(100, 116, 139, 0.1);
+  color: var(--text-muted);
+}
+
+.offer-date,
+.offer-return-date {
+  color: var(--text-muted);
+  font-size: var(--text-body);
+}
+
+.offer-price {
+  font-weight: 700;
+  color: var(--text);
+  font-size: var(--text-body-lg);
+}
+
+.offer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--cta);
+  color: #fff;
+  text-decoration: none;
+  font-size: var(--text-meta);
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  transition: background 0.2s;
+}
+
+.offer-link:hover {
+  background: var(--cta-hover);
+}
+
+.offer-link::after {
+  content: '→';
+  margin-left: var(--space-xs);
+}
+
+@media (max-width: 600px) {
+  .route-header {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: var(--card-pad-sm);
+  }
+
+  .offers {
+    padding: 0 var(--card-pad-sm) var(--card-pad-sm);
+    grid-template-columns: minmax(0, 1fr) minmax(80px, auto) minmax(80px, auto) minmax(70px, auto) minmax(6rem, auto);
+    gap: 0 var(--space-md);
+  }
+
+  .offer-row > * {
+    padding: var(--space-sm) 0;
+  }
+}

@@ -1,0 +1,33 @@
+.list-section {
+  margin-top: var(--space-sm);
+}
+
+.list-section-header {
+  margin-bottom: var(--space-lg);
+}
+
+.btn-voltar-home {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-sm) var(--space-lg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--text-body-lg);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.btn-voltar-home:hover {
+  background: var(--bg);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.opportunities {
+  display: grid;
+  gap: var(--space-lg);
+}
