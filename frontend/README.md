@@ -18,3 +18,14 @@ Interface oficial das ofertas de voos do **ScrapeAero**. O `web_app.py` serve ap
 3. Acesse **http://localhost:5000** — a API e o frontend React são servidos juntos.
 
 Se `frontend/dist` não existir, o Flask ainda sobe e a API responde; a rota `/` exibe instruções para rodar `npm run build`.
+
+## Em outra máquina (clone / deploy)
+
+A pasta `dist/` está no `.gitignore`, então **não é enviada** com o repositório. Na máquina onde for rodar o app:
+
+1. `cd frontend`
+2. `npm install`
+3. `npm run build`
+4. Volte à raiz e rode `python web_app.py`
+
+Ou copie a pasta `frontend/dist` da máquina onde você já fez o build.
