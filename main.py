@@ -2,7 +2,6 @@ import asyncio
 import json
 import random
 import re
-import sys
 from datetime import date
 from urllib.parse import urlparse
 from typing import Optional, Tuple, List
@@ -30,11 +29,8 @@ CURRENCY = "BRL"
 
 MAX_ROUTES_PER_RUN = None        # None = todas as rotas elegíveis do DB
 MAX_OFFERS_PER_ROUTE = 25        # limita quantos cards por rota (pra não demorar demais)
-# Pausas maiores reduzem bloqueio anti-bot ("navegando muito rápido")
-DELAY_MS_BETWEEN_ROUTES = (25000, 50000)  # 25–50 s entre rotas
+DELAY_MS_BETWEEN_ROUTES = (2500, 6000)  # pausa aleatória (min, max)
 ROUTE_TIMEOUT_S = 120  # evita travamento em rota problemática
-DELAY_MS_AFTER_PAGE_LOAD = (15000, 28000)  # 15–28 s após carregar (simula leitura)
-DELAY_MS_BEFORE_NAVIGATE = (3000, 8000)   # 3–8 s antes de abrir próxima URL
 
 # Debug temporário: focar em uma rota até estabilizar o scraper
 FOCUS_ROUTE_ONLY = False
@@ -201,17 +197,6 @@ def parse_price_to_int(price_text: str) -> int:
     return int(digits) if digits else 0
 
 
-# Códigos que alguns sites mostram mas devem ser normalizados para IATA (ex.: RIO -> GIG)
-AIRPORT_CODE_NORMALIZE = {"RIO": "GIG", "SAO": "GRU", "BHZ": "CNF"}
-
-
-def normalize_airport_code(code: str) -> str:
-    """Retorna o código IATA normalizado (ex.: RIO -> GIG)."""
-    if not code or not (code := (code or "").strip().upper()):
-        return code
-    return AIRPORT_CODE_NORMALIZE.get(code, code)
-
-
 def parse_route(route_text: str) -> Tuple[Optional[str], Optional[str]]:
     m = re.search(r"\b([A-Z]{3})\s*-\s*([A-Z]{3})\b", route_text or "")
     if not m:
@@ -238,7 +223,7 @@ def parse_ptbr_date(text: str) -> Optional[date]:
 
 async def wait_for_results(page: Page, timeout_ms: int) -> bool:
     elapsed = 0
-    interval = 3500  # polling a cada ~3.5 s (menos agressivo que 2 s)
+    interval = 2000
 
     while elapsed < timeout_ms:
         for selector in CARD_SELECTORS:
@@ -252,10 +237,9 @@ async def wait_for_results(page: Page, timeout_ms: int) -> bool:
         if elapsed > 0 and elapsed % 10000 == 0:
             print(f"⏳ Aguardando resultados... {elapsed // 1000}s")
 
-        # Ajuda quando a página só renderiza cards após interações/scroll (scroll suave).
+        # Ajuda quando a página só renderiza cards após interações/scroll.
         try:
             await page.evaluate("window.scrollBy(0, 1200)")
-            await page.wait_for_timeout(random.randint(400, 900))
         except Exception:
             pass
 
@@ -374,9 +358,8 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     valid_navigation = False
 
     for candidate_url in urls:
-        await page.wait_for_timeout(random.randint(*DELAY_MS_BEFORE_NAVIGATE))
         await page.goto(candidate_url, wait_until="load", timeout=60000)
-        await page.wait_for_timeout(random.randint(*DELAY_MS_AFTER_PAGE_LOAD))
+        await page.wait_for_timeout(10000)
 
         current_url = page.url
         if is_home_redirect(current_url):
@@ -408,9 +391,7 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     close_button = page.get_by_role("button", name=re.compile(r"aceitar|entendi|fechar", re.I)).first
     try:
         if await close_button.is_visible(timeout=2500):
-            await page.wait_for_timeout(random.randint(1000, 4000))
             await close_button.click()
-            await page.wait_for_timeout(random.randint(1500, 3500))
     except Exception:
         pass
 
@@ -419,9 +400,8 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     has_results = await wait_for_results(page, timeout_ms=60000)
     if not has_results:
         # Viajanet eventualmente carrega estado incompleto; um reload costuma resolver.
-        await page.wait_for_timeout(random.randint(2000, 5000))
         await page.reload(wait_until="load", timeout=60000)
-        await page.wait_for_timeout(random.randint(*DELAY_MS_AFTER_PAGE_LOAD))
+        await page.wait_for_timeout(10000)
         has_results = await wait_for_results(page, timeout_ms=30000)
 
     if not has_results:
@@ -472,9 +452,7 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
                 "destination_hint": destination_hint,
                 "extraction_mode": "html_fallback",
             }
-            origin_n = normalize_airport_code(origin)
-            dest_n = normalize_airport_code(destination)
-            insert_raw(origin_n, dest_n, dep_date, None, price_brl, payload)
+            insert_raw(origin, destination, dep_date, None, price_brl, payload)
             saved += 1
 
         print(f"✅ Salvos via fallback para {origin_hint}->{destination_hint}: {saved}")
@@ -544,9 +522,7 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
             "destination_hint": destination_hint,
         }
 
-        origin_n = normalize_airport_code(origin)
-        dest_n = normalize_airport_code(destination)
-        insert_raw(origin_n, dest_n, dep_date, ret_date, price_brl, payload)
+        insert_raw(origin, destination, dep_date, ret_date, price_brl, payload)
         saved += 1
 
     print(f"✅ Salvos (raw) para {origin_hint}->{destination_hint}: {saved}")
@@ -579,8 +555,6 @@ async def run_batch():
         page.set_default_timeout(30000)
 
         total_saved = 0
-        # Pausa inicial antes da primeira rota (evita acessar o site no primeiro segundo)
-        await page.wait_for_timeout(random.randint(5000, 12000))
 
         for (origin, destination) in routes:
             try:
@@ -606,47 +580,10 @@ def run_opportunities_engine() -> None:
     generate_opportunities(db_config=DB_CONFIG, source=None)
 
 
-def run_one_cycle() -> None:
-    """Uma volta completa: scraping ViajaNet + motor de oportunidades."""
-    asyncio.run(run_batch())
-    run_opportunities_engine()
-
-
 def main() -> None:
-    import time
-    service_mode = "--service" in sys.argv
-    interval_minutes = 60
-    if "--interval" in sys.argv:
-        try:
-            i = sys.argv.index("--interval")
-            if i + 1 < len(sys.argv):
-                interval_minutes = max(1, int(sys.argv[i + 1]))
-        except (ValueError, IndexError):
-            pass
-
-    if service_mode:
-        print("======================================")
-        print(">>> Serviço de scraping (ViajaNet)")
-        print(">>> Reexecutando a cada", interval_minutes, "minuto(s). Ctrl+C para parar.")
-        print("======================================\n")
-        cycle = 0
-        try:
-            while True:
-                cycle += 1
-                print("\n" + "=" * 60)
-                print(f">>> Ciclo {cycle} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
-                print("=" * 60)
-                run_one_cycle()
-                print(f"\n>>> Próximo ciclo em {interval_minutes} minuto(s)...")
-                time.sleep(interval_minutes * 60)
-        except KeyboardInterrupt:
-            print("\n>>> Encerrando serviço de scraping.")
-        return
-
     print("Escolha o modo de execução:")
     print("  1) Scraping + motor de oportunidades")
     print("  2) Apenas motor de oportunidades")
-    print("  (Use --service para rodar em loop contínuo)")
     try:
         choice = input("Opção (1 ou 2): ").strip() or "1"
     except EOFError:
@@ -654,7 +591,9 @@ def main() -> None:
     if choice == "2":
         run_opportunities_engine()
         return
-    run_one_cycle()
+    # Opção 1 ou padrão: scraping e depois motor de oportunidades
+    asyncio.run(run_batch())
+    run_opportunities_engine()
 
 
 if __name__ == "__main__":
