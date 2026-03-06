@@ -42,31 +42,31 @@
   letter-spacing: -0.02em;
 }
 
-.offers {
+.offers-wrap {
   padding: 0 var(--card-pad) var(--card-pad);
-  display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(100px, auto) minmax(100px, auto) minmax(100px, auto) minmax(90px, auto) minmax(7rem, auto);
-  gap: 0 var(--space-xl);
-  align-items: center;
+  overflow-x: auto;
 }
 
-.offer-row {
-  display: contents;
-}
-
-.offer-row > * {
-  padding: var(--space-md) 0;
-  border-bottom: 1px solid var(--border);
+.offers-table {
+  width: 100%;
+  border-collapse: collapse;
   font-size: var(--text-body);
 }
 
-.offer-row:last-child > * {
+.offers-table th,
+.offers-table td {
+  padding: var(--space-md) var(--space-lg) var(--space-md) 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.offers-table tbody tr:last-child td {
   border-bottom: none;
 }
 
-.offer-row.offer-header > * {
-  padding: var(--space-sm) 0;
-  border-bottom: 1px solid var(--border);
+.offers-table th {
+  padding: var(--space-sm) var(--space-lg) var(--space-sm) 0;
   font-size: var(--text-label);
   font-weight: 700;
   text-transform: uppercase;
@@ -74,10 +74,39 @@
   color: var(--text-muted);
 }
 
-.offers .offer-link-cell,
-.offers .offer-link {
-  justify-self: end;
+.offers-table .offer-days {
+  white-space: nowrap;
+  min-width: 6rem;
+}
+
+.offers-table .offer-link-cell {
   text-align: right;
+}
+
+/* Coluna Fornecedor: alinhada à tabela, mesmo padding das outras colunas */
+.offers-table th.offer-source,
+.offers-table td.offer-source {
+  display: table-cell;
+  text-align: center;
+  white-space: nowrap;
+  min-width: 8.5rem;
+  max-width: 10rem;
+  font-size: var(--text-label);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: var(--space-md) var(--space-lg) var(--space-md) 0;
+  vertical-align: middle;
+}
+
+.offers-table th.offer-source {
+  padding: var(--space-sm) var(--space-lg) var(--space-sm) 0;
+}
+
+.offers-table td.offer-source {
+  border-radius: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .offer-source {
@@ -153,13 +182,12 @@
     padding: var(--card-pad-sm);
   }
 
-  .offers {
+  .offers-wrap {
     padding: 0 var(--card-pad-sm) var(--card-pad-sm);
-    grid-template-columns: minmax(0, 1fr) minmax(80px, auto) minmax(80px, auto) minmax(75px, auto) minmax(70px, auto) minmax(6rem, auto);
-    gap: 0 var(--space-md);
   }
 
-  .offer-row > * {
-    padding: var(--space-sm) 0;
+  .offers-table th,
+  .offers-table td {
+    padding: var(--space-sm) var(--space-sm) var(--space-sm) 0;
   }
 }

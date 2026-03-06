@@ -29,48 +29,54 @@ export function RouteCard({ route, labels }: RouteCardProps) {
         </span>
         <span className="route-min-price">{formatPrice(minPrice)}</span>
       </div>
-      <div className="offers">
-        <div className="offer-row offer-header">
-          <span className="offer-source">Fornecedor</span>
-          <span className="offer-date">Data partida</span>
-          <span className="offer-return-date">Data retorno</span>
-          <span className="offer-days">Dias (ida–volta)</span>
-          <span className="offer-price">Preço</span>
-          <span className="offer-link-cell">Ver oferta</span>
-        </div>
-        {sortedOffers.map((offer: Offer, i: number) => {
-          const href = getOfferUrl({
-            ...offer,
-            origin: route.origin,
-            destination: route.destination,
-          })
-          const returnStr = offer.return_date ? formatDate(offer.return_date) : ''
-          const days = daysBetweenDepartureAndReturn(offer.departure_date, offer.return_date)
-          const daysStr = days != null ? `${days} dia${days !== 1 ? 's' : ''}` : '—'
-          return (
-            <div key={i} className="offer-row">
-              <span className={'offer-source ' + sourceClass(offer.source)}>
-                {sourceLabel(offer.source)}
-              </span>
-              <span className="offer-date">{formatDate(offer.departure_date)}</span>
-              <span className="offer-return-date">{returnStr}</span>
-              <span className="offer-days">{daysStr}</span>
-              <span className="offer-price">{formatPrice(offer.price)}</span>
-              {href && href !== '#' ? (
-                <a
-                  className="offer-link"
-                  href={href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Ver oferta
-                </a>
-              ) : (
-                <span className="offer-link-cell" />
-              )}
-            </div>
-          )
-        })}
+      <div className="offers-wrap">
+        <table className="offers-table">
+          <thead>
+            <tr>
+              <th className="offer-source">Fornecedor</th>
+              <th className="offer-date">Data partida</th>
+              <th className="offer-return-date">Data retorno</th>
+              <th className="offer-days">Dias (ida–volta)</th>
+              <th className="offer-price">Preço</th>
+              <th className="offer-link-cell">Ver oferta</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedOffers.map((offer: Offer, i: number) => {
+              const href = getOfferUrl({
+                ...offer,
+                origin: route.origin,
+                destination: route.destination,
+              })
+              const returnStr = offer.return_date ? formatDate(offer.return_date) : ''
+              const days = daysBetweenDepartureAndReturn(offer.departure_date, offer.return_date)
+              const daysStr = days != null ? `${days} dia${days !== 1 ? 's' : ''}` : '—'
+              return (
+                <tr key={i}>
+                  <td className={'offer-source ' + sourceClass(offer.source)}>
+                    {sourceLabel(offer.source)}
+                  </td>
+                  <td className="offer-date">{formatDate(offer.departure_date)}</td>
+                  <td className="offer-return-date">{returnStr}</td>
+                  <td className="offer-days">{daysStr}</td>
+                  <td className="offer-price">{formatPrice(offer.price)}</td>
+                  <td className="offer-link-cell">
+                    {href && href !== '#' ? (
+                      <a
+                        className="offer-link"
+                        href={href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Ver oferta
+                      </a>
+                    ) : null}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   )

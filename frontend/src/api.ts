@@ -47,6 +47,7 @@ export async function fetchOpportunities(params?: {
     return_date: (row.return_date as string) ?? null,
     price: Number(row.price),
     url: (row.url as string) || undefined,
+    score: row.score != null ? Number(row.score) : null,
     global_rank: index + 1,
   }))
 }

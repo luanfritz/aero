@@ -23,7 +23,8 @@ export function HighlightCard({ route, labels }: HighlightCardProps) {
   const depStr = best?.departure_date ? formatDate(best.departure_date) : ''
   const retStr = best?.return_date ? formatDate(best.return_date) : ''
 
-  const promotion = getPromotionLevel(best?.score)
+  // score vem da API; sem score usamos level-5 para o badge não “reverter” no build
+  const promotion = getPromotionLevel(best?.score ?? 25)
 
   const content = (
     <>
