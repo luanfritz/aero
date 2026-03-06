@@ -20,14 +20,16 @@ export async function fetchDeals(params?: {
   return Array.isArray(data) ? data : []
 }
 
-/** Ofertas de TODAS as fontes (flight_prices_raw). Com origin/destination retorna todas as ofertas cadastradas que batem no filtro. */
+/** Ofertas de TODAS as fontes (flight_prices_raw). Com origin/destination retorna todas as ofertas cadastradas que batem no filtro. forHome=true só busca o mínimo para os cards da home (carga rápida). */
 export async function fetchOpportunities(params?: {
   origin?: string
   destination?: string
+  forHome?: boolean
 }): Promise<Offer[]> {
   const search = new URLSearchParams()
   if (params?.origin?.trim()) search.set('origin', params.origin.trim())
   if (params?.destination?.trim()) search.set('destination', params.destination.trim())
+  if (params?.forHome) search.set('for_home', '1')
   const qs = search.toString()
   const url = qs ? `${API}/opportunities?${qs}` : `${API}/opportunities`
   const res = await fetch(url)

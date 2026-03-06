@@ -84,20 +84,106 @@ def generate_opportunities(
     source: Optional[str] = DEFAULT_SOURCE,
     days_lookback: int = DAYS_LOOKBACK,
     max_per_route: int = 5,
+    max_routes: Optional[int] = None,
     silent: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Analisa preços em flight_prices_raw e retorna oportunidades (melhores
     preços por rota). source=None considera todas as fontes (viajanet + passagens_imperdiveis).
+    Se max_routes for informado, só busca ofertas das N melhores rotas (por preço mínimo),
+    reduzindo carga no DB e tempo de resposta (recomendado para a home).
     """
     config = db_config or DEFAULT_DB_CONFIG
     conn = psycopg2.connect(**config)
     opportunities: List[Dict[str, Any]] = []
     all_sources = source is None
+    date_filter = "(scraped_at >= now() - (%s * interval '1 day') OR scraped_at IS NULL)"
 
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            if all_sources:
+            if max_routes is not None and max_routes > 0:
+                # Query limitada: só as top max_routes rotas (por preço mínimo) — muito mais rápida
+                if all_sources:
+                    try:
+                        cur.execute(
+                            """
+                            WITH top_routes AS (
+                                SELECT origin, destination
+                                FROM flight_prices_raw
+                                WHERE (""" + date_filter + """)
+                                GROUP BY origin, destination
+                                ORDER BY MIN(price) ASC
+                                LIMIT %s
+                            )
+                            SELECT r.source, r.origin, r.destination, r.departure_date, r.return_date,
+                                   r.price, r.scraped_at, r.payload
+                            FROM flight_prices_raw r
+                            INNER JOIN top_routes t ON r.origin = t.origin AND r.destination = t.destination
+                            WHERE (r.scraped_at >= now() - (%s * interval '1 day') OR r.scraped_at IS NULL)
+                            ORDER BY r.source, r.origin, r.destination, r.price ASC, r.departure_date
+                            """,
+                            (days_lookback, max_routes, days_lookback),
+                        )
+                    except psycopg2.Error:
+                        cur.execute(
+                            """
+                            WITH top_routes AS (
+                                SELECT origin, destination
+                                FROM flight_prices_raw
+                                GROUP BY origin, destination
+                                ORDER BY MIN(price) ASC
+                                LIMIT %s
+                            )
+                            SELECT r.source, r.origin, r.destination, r.departure_date, r.return_date,
+                                   r.price, NULL::timestamptz AS scraped_at, r.payload
+                            FROM flight_prices_raw r
+                            INNER JOIN top_routes t ON r.origin = t.origin AND r.destination = t.destination
+                            ORDER BY r.source, r.origin, r.destination, r.price ASC, r.departure_date
+                            """,
+                            (max_routes,),
+                        )
+                else:
+                    try:
+                        cur.execute(
+                            """
+                            WITH top_routes AS (
+                                SELECT origin, destination
+                                FROM flight_prices_raw
+                                WHERE source = %s AND (""" + date_filter + """)
+                                GROUP BY origin, destination
+                                ORDER BY MIN(price) ASC
+                                LIMIT %s
+                            )
+                            SELECT r.source, r.origin, r.destination, r.departure_date, r.return_date,
+                                   r.price, r.scraped_at, r.payload
+                            FROM flight_prices_raw r
+                            INNER JOIN top_routes t ON r.origin = t.origin AND r.destination = t.destination
+                            WHERE r.source = %s AND (r.scraped_at >= now() - (%s * interval '1 day') OR r.scraped_at IS NULL)
+                            ORDER BY r.origin, r.destination, r.price ASC, r.departure_date
+                            """,
+                            (source, days_lookback, max_routes, source, days_lookback),
+                        )
+                    except psycopg2.Error:
+                        cur.execute(
+                            """
+                            WITH top_routes AS (
+                                SELECT origin, destination
+                                FROM flight_prices_raw
+                                WHERE source = %s
+                                GROUP BY origin, destination
+                                ORDER BY MIN(price) ASC
+                                LIMIT %s
+                            )
+                            SELECT r.source, r.origin, r.destination, r.departure_date, r.return_date,
+                                   r.price, NULL::timestamptz AS scraped_at, r.payload
+                            FROM flight_prices_raw r
+                            INNER JOIN top_routes t ON r.origin = t.origin AND r.destination = t.destination
+                            WHERE r.source = %s
+                            ORDER BY r.origin, r.destination, r.price ASC, r.departure_date
+                            """,
+                            (source, max_routes, source),
+                        )
+            elif all_sources:
                 try:
                     cur.execute(
                         """
@@ -106,6 +192,7 @@ def generate_opportunities(
                             origin,
                             destination,
                             departure_date,
+                            return_date,
                             price,
                             scraped_at,
                             payload
@@ -124,6 +211,7 @@ def generate_opportunities(
                             origin,
                             destination,
                             departure_date,
+                            return_date,
                             price,
                             NULL::timestamptz AS scraped_at,
                             payload
@@ -140,6 +228,7 @@ def generate_opportunities(
                             origin,
                             destination,
                             departure_date,
+                            return_date,
                             price,
                             scraped_at,
                             payload
@@ -158,6 +247,7 @@ def generate_opportunities(
                             origin,
                             destination,
                             departure_date,
+                            return_date,
                             price,
                             NULL::timestamptz AS scraped_at,
                             payload
