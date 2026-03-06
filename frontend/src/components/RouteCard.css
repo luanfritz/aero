@@ -45,7 +45,7 @@
 .offers {
   padding: 0 var(--card-pad) var(--card-pad);
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(100px, auto) minmax(100px, auto) minmax(90px, auto) minmax(7rem, auto);
+  grid-template-columns: minmax(140px, 1fr) minmax(100px, auto) minmax(100px, auto) minmax(100px, auto) minmax(90px, auto) minmax(7rem, auto);
   gap: 0 var(--space-xl);
   align-items: center;
 }
@@ -111,7 +111,8 @@
 }
 
 .offer-date,
-.offer-return-date {
+.offer-return-date,
+.offer-days {
   color: var(--text-muted);
   font-size: var(--text-body);
 }
@@ -154,7 +155,7 @@
 
   .offers {
     padding: 0 var(--card-pad-sm) var(--card-pad-sm);
-    grid-template-columns: minmax(0, 1fr) minmax(80px, auto) minmax(80px, auto) minmax(70px, auto) minmax(6rem, auto);
+    grid-template-columns: minmax(0, 1fr) minmax(80px, auto) minmax(80px, auto) minmax(75px, auto) minmax(70px, auto) minmax(6rem, auto);
     gap: 0 var(--space-md);
   }
 

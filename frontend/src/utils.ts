@@ -23,6 +23,20 @@ export function formatDate(iso: string | null | undefined): string {
   })
 }
 
+/** Retorna a quantidade de dias entre data de ida e data de volta (inclusive). Ida só = null. */
+export function daysBetweenDepartureAndReturn(
+  departureDate: string | null | undefined,
+  returnDate: string | null | undefined
+): number | null {
+  if (!departureDate || !returnDate) return null
+  const dep = new Date(departureDate)
+  const ret = new Date(returnDate)
+  if (isNaN(dep.getTime()) || isNaN(ret.getTime())) return null
+  const diff = ret.getTime() - dep.getTime()
+  if (diff < 0) return null
+  return Math.round(diff / (24 * 60 * 60 * 1000))
+}
+
 export function toYyyyMmDd(isoOrDate: string | Date | null | undefined): string {
   if (!isoOrDate) return ''
   const d = new Date(isoOrDate)

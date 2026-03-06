@@ -1,5 +1,5 @@
 import type { RouteWithOffers, Offer } from '../types'
-import { formatDate, formatPrice, sourceLabel, sourceClass, getOfferUrl } from '../utils'
+import { formatDate, formatPrice, sourceLabel, sourceClass, getOfferUrl, daysBetweenDepartureAndReturn } from '../utils'
 import './RouteCard.css'
 
 function formatAirportLabel(code: string, labels: Record<string, string>): string {
@@ -34,6 +34,7 @@ export function RouteCard({ route, labels }: RouteCardProps) {
           <span className="offer-source">Fornecedor</span>
           <span className="offer-date">Data partida</span>
           <span className="offer-return-date">Data retorno</span>
+          <span className="offer-days">Dias (ida–volta)</span>
           <span className="offer-price">Preço</span>
           <span className="offer-link-cell">Ver oferta</span>
         </div>
@@ -44,6 +45,8 @@ export function RouteCard({ route, labels }: RouteCardProps) {
             destination: route.destination,
           })
           const returnStr = offer.return_date ? formatDate(offer.return_date) : ''
+          const days = daysBetweenDepartureAndReturn(offer.departure_date, offer.return_date)
+          const daysStr = days != null ? `${days} dia${days !== 1 ? 's' : ''}` : '—'
           return (
             <div key={i} className="offer-row">
               <span className={'offer-source ' + sourceClass(offer.source)}>
@@ -51,6 +54,7 @@ export function RouteCard({ route, labels }: RouteCardProps) {
               </span>
               <span className="offer-date">{formatDate(offer.departure_date)}</span>
               <span className="offer-return-date">{returnStr}</span>
+              <span className="offer-days">{daysStr}</span>
               <span className="offer-price">{formatPrice(offer.price)}</span>
               {href && href !== '#' ? (
                 <a
