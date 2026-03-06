@@ -40,7 +40,7 @@ WAIT_AFTER_CLICK_MS = 1500
 WAIT_VER_DATAS_MS = 2500
 
 # Códigos do site que devem ser normalizados para IATA (ex.: Melhores Destinos usa BHZ = CNF, RIO = GIG, SAO = GRU)
-AIRPORT_CODE_NORMALIZE = {"BHZ": "CNF", "RIO": "GIG", "SAO": "GRU", "MIL": "MXP"}
+AIRPORT_CODE_NORMALIZE = {"BHZ": "CNF", "RIO": "GIG", "SAO": "GRU", "MIL": "MXP", "NYC": "JFK"}
 
 # Nomes/labels que indicam aeroporto quando o site mostra código ou só o nome
 NAME_TO_CODE_HINTS = [

@@ -49,7 +49,7 @@ ROUTE_SPAN = "[class*='produtoIdaVolta_section_span_texto__idaVolta']"
 PRICE_SPAN = "[class*='produtoIdaVolta_section_preco']"
 
 # Códigos que devem ser normalizados para IATA (ex.: RIO -> GIG)
-AIRPORT_CODE_NORMALIZE = {"RIO": "GIG", "SAO": "GRU", "BHZ": "CNF", "MIL": "MXP"}
+AIRPORT_CODE_NORMALIZE = {"RIO": "GIG", "SAO": "GRU", "BHZ": "CNF", "MIL": "MXP", "NYC": "JFK"}
 
 
 def normalize_airport_code(code: str) -> str:
@@ -150,22 +150,37 @@ def parse_origin_destination(text: str) -> tuple:
 
 
 def extract_promo_links(page) -> List[Dict[str, str]]:
-    """Na página de listagem, extrai todos os links de promoção (sem limite)."""
+    """
+    Na página de listagem, extrai todas as promoções dos cards do grid.
+    Suporta grid "Últimas Publicações" (cardsUltimasPublicacoes) e "Promo" (cardsPromo).
+    Inclui links /promocao-... e /passagens-...
+    """
     page.goto(URL, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_selector('a[href^="/promocao-"]', timeout=60000)
+    # Grid de cards: página usa cardsUltimasPublicacoes_container_grid (e _grid_item)
+    page.wait_for_selector('[class*="cardsUltimasPublicacoes_container_grid"]', timeout=60000)
     page.wait_for_timeout(2000)
 
     items = []
-    for a in page.query_selector_all('a[href^="/promocao-"]'):
-        href = a.get_attribute("href") or ""
-        href = href.strip()
-        if not href:
+    seen_urls: Set[str] = set()
+    # Cada card: class cardsUltimasPublicacoes_container_grid_item__vPPpq
+    card_items = page.query_selector_all('[class*="cardsUltimasPublicacoes_container_grid_item"]')
+    if not card_items:
+        # Fallback se a página usar o grid "cardsPromo" em outro build
+        card_items = page.query_selector_all('[class*="cardsPromo_gridContainer_grid_item"]')
+    for card in card_items:
+        a = card.query_selector('a[href^="/"]')
+        if not a:
+            continue
+        href = (a.get_attribute("href") or "").strip()
+        if not href or not href.startswith("/"):
             continue
         url = urljoin(BASE_URL, href)
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
         title_el = a.query_selector("h5")
         title = (title_el.inner_text() if title_el else "").strip()
-        if url and url not in [it["url"] for it in items]:
-            items.append({"title": title or url, "url": url})
+        items.append({"title": title or url, "url": url})
     return items
 
 
