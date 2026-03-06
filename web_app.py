@@ -379,13 +379,18 @@ def api_opportunities():
             if opportunities is None:
                 opportunities = []
         else:
-            # Home sem filtro: limitar às melhores rotas para resposta rápida (evita scan completo)
+            # for_home=1: só dados para os cards (poucas rotas). Sem for_home: lista completa para "Ver mais"
+            for_home = request.args.get("for_home", "").strip().lower() in ("1", "true", "yes")
+            if for_home:
+                max_routes, max_per_route = 15, 5
+            else:
+                max_routes, max_per_route = 60, 10
             opportunities = generate_opportunities(
                 db_config=main.DB_CONFIG,
                 source=None,
                 days_lookback=days,
-                max_per_route=10,
-                max_routes=60,
+                max_per_route=max_per_route,
+                max_routes=max_routes,
                 silent=True,
             )
         return jsonify(_serialize(opportunities))

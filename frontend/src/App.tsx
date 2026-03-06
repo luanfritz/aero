@@ -45,6 +45,8 @@ function App() {
   const [uiState, setUiState] = useState<UiState>('loading')
   const [errorMsg, setErrorMsg] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>('home')
+  const [hasLoadedFullList, setHasLoadedFullList] = useState(false)
+  const [listLoading, setListLoading] = useState(false)
 
   function loadOriginsDestinations() {
     fetchOriginsDestinations()
@@ -67,10 +69,13 @@ function App() {
     const origin = (originFilter ?? '').trim()
     const destination = (destinationFilter ?? '').trim()
     const hasFilter = origin.length >= 2 || destination.length >= 2
-    const params = hasFilter ? { origin: origin || undefined, destination: destination || undefined } : undefined
+    const params = hasFilter
+      ? { origin: origin || undefined, destination: destination || undefined }
+      : { forHome: true }
     fetchOpportunities(params)
       .then((data) => {
         setAllOpportunities(data)
+        setHasLoadedFullList(!!hasFilter)
         if (data.length === 0) setUiState('empty')
         else setUiState('ok')
       })
@@ -78,6 +83,17 @@ function App() {
         setErrorMsg(err.message || 'Falha ao carregar ofertas.')
         setUiState('error')
       })
+  }, [])
+
+  const loadFullList = useCallback(() => {
+    setListLoading(true)
+    fetchOpportunities()
+      .then((data) => {
+        setAllOpportunities(data)
+        setHasLoadedFullList(true)
+      })
+      .catch(() => {})
+      .finally(() => setListLoading(false))
   }, [])
 
   useEffect(() => {
@@ -220,16 +236,30 @@ function App() {
           <HighlightCards
             routes={routes}
             labels={labels}
-            onVerTodas={() => setViewMode('list')}
+            onVerTodas={() => {
+              setViewMode('list')
+              if (!hasLoadedFullList) loadFullList()
+            }}
           />
         )}
 
-        {uiState === 'ok' && routes.length > 0 && showList && (
-          <OpportunityList
-            routes={routes}
-            labels={labels}
-            onVoltarHome={() => setViewMode('home')}
-          />
+        {uiState === 'ok' && showList && (
+          listLoading ? (
+            <div className="state state-loading">
+              <div className="spinner" />
+              <p>Carregando lista de ofertas...</p>
+            </div>
+          ) : routes.length > 0 ? (
+            <OpportunityList
+              routes={routes}
+              labels={labels}
+              onVoltarHome={() => setViewMode('home')}
+            />
+          ) : (
+            <div className="state state-empty">
+              <p>Nenhuma oferta encontrada.</p>
+            </div>
+          )
         )}
       </main>
 
