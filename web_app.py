@@ -379,11 +379,13 @@ def api_opportunities():
             if opportunities is None:
                 opportunities = []
         else:
+            # Home sem filtro: limitar às melhores rotas para resposta rápida (evita scan completo)
             opportunities = generate_opportunities(
                 db_config=main.DB_CONFIG,
                 source=None,
                 days_lookback=days,
                 max_per_route=10,
+                max_routes=60,
                 silent=True,
             )
         return jsonify(_serialize(opportunities))
