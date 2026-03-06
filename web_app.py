@@ -12,9 +12,10 @@ from datetime import date, datetime
 # Garante que o diretório do projeto está no path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from flask import Flask, jsonify, send_from_directory, Response
+from flask import Flask, jsonify, request, send_from_directory, Response
 from flask_cors import CORS
 import psycopg2
+from psycopg2.extras import RealDictCursor
 
 import main
 from opportunities_engine import generate_opportunities, build_search_url
@@ -296,18 +297,95 @@ def api_deals():
         return jsonify({"error": str(e)}), 500
 
 
+def _get_opportunities_filtered(origin: str = None, destination: str = None, days_lookback: int = 60, limit: int = 1000):
+    """
+    Busca em flight_prices_raw todas as ofertas que batem com o filtro (origin e/ou destination).
+    Usado quando o usuário filtra pelo campo de pesquisa para listar todas as ofertas cadastradas.
+    """
+    origin = (origin or "").strip().upper() or None
+    destination = (destination or "").strip().upper() or None
+    if not origin and not destination:
+        return None  # sem filtro: usar generate_opportunities
+    conn = psycopg2.connect(**main.DB_CONFIG)
+    try:
+        where_parts = ["(origin IS NOT NULL AND origin != '')", "(destination IS NOT NULL AND destination != '')"]
+        params = []
+        if origin:
+            where_parts.append("UPPER(TRIM(origin)) = %s")
+            params.append(origin)
+        if destination:
+            where_parts.append("UPPER(TRIM(destination)) = %s")
+            params.append(destination)
+        where_parts.append("(scraped_at IS NULL OR scraped_at >= now() - (%s * interval '1 day'))")
+        params.extend([days_lookback, limit])
+        sql = """
+            SELECT source, origin, destination, departure_date, return_date, price, payload
+            FROM flight_prices_raw
+            WHERE """ + " AND ".join(where_parts) + """
+            ORDER BY origin, destination, price ASC, departure_date
+            LIMIT %s
+        """
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        opportunities = []
+        for r in rows:
+            payload = r.get("payload") or {}
+            if isinstance(payload, str):
+                try:
+                    payload = json.loads(payload) if payload else {}
+                except Exception:
+                    payload = {}
+            url = build_search_url(
+                r.get("origin") or "",
+                r.get("destination") or "",
+                r.get("source") or "",
+                payload,
+                departure_date=r.get("departure_date"),
+                return_date=r.get("return_date"),
+            )
+            opportunities.append({
+                "source": r.get("source"),
+                "origin": r.get("origin"),
+                "destination": r.get("destination"),
+                "departure_date": r.get("departure_date"),
+                "return_date": r.get("return_date"),
+                "price": r.get("price"),
+                "url": url,
+            })
+        return opportunities
+    finally:
+        conn.close()
+
+
 @app.route("/api/opportunities")
 def api_opportunities():
-    """Retorna oportunidades de TODAS as fontes (flight_prices_raw), sem filtrar por source."""
+    """
+    Retorna oportunidades (flight_prices_raw).
+    Sem filtro: usa motor com max 10 por rota.
+    Com ?origin=X e/ou ?destination=Y: retorna TODAS as ofertas cadastradas que batem no filtro (até 1000).
+    """
     try:
         days = int(os.environ.get("OPPORTUNITIES_DAYS", "60"))
-        opportunities = generate_opportunities(
-            db_config=main.DB_CONFIG,
-            source=None,
-            days_lookback=days,
-            max_per_route=10,
-            silent=True,
-        )
+        origin_arg = (request.args.get("origin") or "").strip().upper() or None
+        destination_arg = (request.args.get("destination") or "").strip().upper() or None
+        if origin_arg or destination_arg:
+            opportunities = _get_opportunities_filtered(
+                origin=origin_arg,
+                destination=destination_arg,
+                days_lookback=days,
+                limit=1000,
+            )
+            if opportunities is None:
+                opportunities = []
+        else:
+            opportunities = generate_opportunities(
+                db_config=main.DB_CONFIG,
+                source=None,
+                days_lookback=days,
+                max_per_route=10,
+                silent=True,
+            )
         return jsonify(_serialize(opportunities))
     except Exception as e:
         return jsonify({"error": str(e)}), 500

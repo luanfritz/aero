@@ -20,9 +20,17 @@ export async function fetchDeals(params?: {
   return Array.isArray(data) ? data : []
 }
 
-/** Ofertas de TODAS as fontes (flight_prices_raw). Cada oferta já vem com url direto da promoção (ex.: Passagens Imperdíveis). */
-export async function fetchOpportunities(): Promise<Offer[]> {
-  const res = await fetch(`${API}/opportunities`)
+/** Ofertas de TODAS as fontes (flight_prices_raw). Com origin/destination retorna todas as ofertas cadastradas que batem no filtro. */
+export async function fetchOpportunities(params?: {
+  origin?: string
+  destination?: string
+}): Promise<Offer[]> {
+  const search = new URLSearchParams()
+  if (params?.origin?.trim()) search.set('origin', params.origin.trim())
+  if (params?.destination?.trim()) search.set('destination', params.destination.trim())
+  const qs = search.toString()
+  const url = qs ? `${API}/opportunities?${qs}` : `${API}/opportunities`
+  const res = await fetch(url)
   if (!res.ok) throw new Error(`${res.status} ${res.statusText || 'Erro'}`)
   const ct = res.headers.get('Content-Type') || ''
   if (!ct.includes('application/json')) throw new Error('Resposta inválida do servidor (não é JSON).')

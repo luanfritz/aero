@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { fetchOpportunities, fetchOriginsDestinations } from './api'
 import type { Offer, RouteWithOffers, AirportOption } from './types'
 import { parseAirportInput, parseDateOnly, parseMonthInput } from './utils'
@@ -61,10 +61,14 @@ function App() {
       .catch(() => {})
   }
 
-  function loadDeals() {
+  const loadDeals = useCallback((originFilter?: string, destinationFilter?: string) => {
     setUiState('loading')
     setErrorMsg('')
-    fetchOpportunities()
+    const origin = (originFilter ?? '').trim()
+    const destination = (destinationFilter ?? '').trim()
+    const hasFilter = origin.length >= 2 || destination.length >= 2
+    const params = hasFilter ? { origin: origin || undefined, destination: destination || undefined } : undefined
+    fetchOpportunities(params)
       .then((data) => {
         setAllOpportunities(data)
         if (data.length === 0) setUiState('empty')
@@ -74,7 +78,7 @@ function App() {
         setErrorMsg(err.message || 'Falha ao carregar ofertas.')
         setUiState('error')
       })
-  }
+  }, [])
 
   useEffect(() => {
     loadOriginsDestinations()
@@ -82,7 +86,26 @@ function App() {
 
   useEffect(() => {
     loadDeals()
-  }, [])
+  }, [loadDeals])
+
+  // Quando o usuário filtra por origem/destino, buscar todas as ofertas cadastradas que batem no filtro
+  const originTrim = (origin || '').trim()
+  const destinationTrim = (destination || '').trim()
+  const filterRef = useRef({ origin: '', destination: '' })
+  const isInitialMount = useRef(true)
+  useEffect(() => {
+    if (originTrim === filterRef.current.origin && destinationTrim === filterRef.current.destination) return
+    const prev = filterRef.current
+    filterRef.current = { origin: originTrim, destination: destinationTrim }
+    if (isInitialMount.current) {
+      isInitialMount.current = false
+      if (!originTrim && !destinationTrim) return
+    }
+    const t = setTimeout(() => {
+      loadDeals(originTrim, destinationTrim)
+    }, 400)
+    return () => clearTimeout(t)
+  }, [originTrim, destinationTrim, loadDeals])
 
   function applyDateFilter(list: Offer[]): Offer[] {
     if (!list.length) return list
@@ -161,7 +184,7 @@ function App() {
           setMonthValue={setMonthValue}
           originOptions={originOptions}
           destOptions={destOptions}
-          onRefresh={loadDeals}
+          onRefresh={() => loadDeals(originTrim, destinationTrim)}
           onFilterChange={onFilterChange}
         />
 
