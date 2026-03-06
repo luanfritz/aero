@@ -310,12 +310,16 @@ def _get_opportunities_filtered(origin: str = None, destination: str = None, day
     try:
         where_parts = ["(origin IS NOT NULL AND origin != '')", "(destination IS NOT NULL AND destination != '')"]
         params = []
+        # Sempre usar LIKE %valor% para aceitar código (CNF) ou nome (Belo Horizonte) no banco
+        def like_param(val: str) -> str:
+            v = (val or "").replace("%", "\\%").replace("_", "\\_")
+            return "%" + v + "%"
         if origin:
-            where_parts.append("UPPER(TRIM(origin)) = %s")
-            params.append(origin)
+            where_parts.append("UPPER(TRIM(origin)) LIKE UPPER(%s)")
+            params.append(like_param(origin))
         if destination:
-            where_parts.append("UPPER(TRIM(destination)) = %s")
-            params.append(destination)
+            where_parts.append("UPPER(TRIM(destination)) LIKE UPPER(%s)")
+            params.append(like_param(destination))
         where_parts.append("(scraped_at IS NULL OR scraped_at >= now() - (%s * interval '1 day'))")
         params.extend([days_lookback, limit])
         sql = """
@@ -379,18 +383,23 @@ def api_opportunities():
             if opportunities is None:
                 opportunities = []
         else:
-            # for_home=1: só o mínimo para os 9 cards (resposta rápida). Sem for_home: lista completa para "Ver mais"
+            # for_home=1: mínimo para os 9 cards, janela curta (7 dias) para resposta rápida
             for_home = request.args.get("for_home", "").strip().lower() in ("1", "true", "yes")
             if for_home:
-                max_routes, max_per_route = 10, 3  # 10 rotas × 3 ofertas = só o necessário para os cards
+                max_routes, max_per_route = 10, 3
+                days_lookback_home = 7  # janela curta = menos linhas
+                max_raw_rows = 3000  # cap de linhas lidas = resposta muito mais rápida
             else:
                 max_routes, max_per_route = 60, 10
+                days_lookback_home = days
+                max_raw_rows = None
             opportunities = generate_opportunities(
                 db_config=main.DB_CONFIG,
                 source=None,
-                days_lookback=days,
+                days_lookback=days_lookback_home,
                 max_per_route=max_per_route,
                 max_routes=max_routes,
+                max_raw_rows=max_raw_rows,
                 silent=True,
             )
         return jsonify(_serialize(opportunities))
