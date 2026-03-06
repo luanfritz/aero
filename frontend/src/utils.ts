@@ -60,10 +60,13 @@ export function sourceClass(source: string | undefined): string {
   return source.toLowerCase().replace(/[^a-z0-9]/g, '_')
 }
 
+/** Extrai código IATA para a API: "Belo Horizonte (CNF)" → "CNF"; "CNF" → "CNF". */
 export function parseAirportInput(val: string): string {
   val = (val || '').trim()
-  const match = val.match(/\s*\(([A-Z0-9]{3})\)\s*$/i)
-  return match ? match[1].toUpperCase() : val.toUpperCase()
+  // Último grupo (XXX) ou (XX) no final = código IATA
+  const match = val.match(/\(([A-Z0-9]{2,4})\)\s*$/i)
+  if (match) return match[1].toUpperCase()
+  return val.toUpperCase()
 }
 
 export function buildViajanetOnewayUrl(

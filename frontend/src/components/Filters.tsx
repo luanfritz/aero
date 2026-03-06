@@ -61,6 +61,7 @@ function AutocompleteInput({
   }, [])
 
   const onSelect = (o: AirportOption) => {
+    // Guardar "Label (CODE)" para exibir; a API usa parseAirportInput e recebe só o código
     onChange(displayText(o))
     setOpen(false)
     setHighlight(-1)

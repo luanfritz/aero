@@ -69,8 +69,11 @@ function App() {
     const origin = (originFilter ?? '').trim()
     const destination = (destinationFilter ?? '').trim()
     const hasFilter = origin.length >= 2 || destination.length >= 2
+    // Enviar código do aeroporto (ex: "GRU" de "Guarulhos (GRU)") para a API bater no banco
+    const originCode = parseAirportInput(origin)
+    const destCode = parseAirportInput(destination)
     const params = hasFilter
-      ? { origin: origin || undefined, destination: destination || undefined }
+      ? { origin: originCode || undefined, destination: destCode || undefined }
       : { forHome: true }
     fetchOpportunities(params)
       .then((data) => {

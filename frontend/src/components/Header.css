@@ -9,6 +9,9 @@
   max-width: 1200px;
   margin: 0 auto;
   padding: var(--card-pad);
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .header-brand {
@@ -25,15 +28,15 @@
 
 .header-logo-img {
   display: block;
-  height: 48px;
+  height: 56px;
   width: auto;
   object-fit: contain;
-  object-position: left center;
+  object-position: center center;
   background: transparent;
 }
 
 @media (min-width: 480px) {
   .header-logo-img {
-    height: 56px;
+    height: 72px;
   }
 }
