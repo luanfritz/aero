@@ -40,6 +40,11 @@ SCAN_INTERVAL_MINUTES = int(os.environ.get("MONITOR_PI_INTERVAL_MINUTES", "10"))
 # Defina MONITOR_PI_FOCUS_URL com a URL para focar só nela a cada ciclo.
 FOCUS_URL: Optional[str] = (os.environ.get("MONITOR_PI_FOCUS_URL") or "").strip() or None
 
+# Timeout por página de promoção (ms). Evita travar numa promo que não carrega.
+PROMO_PAGE_TIMEOUT_MS = int(os.environ.get("MONITOR_PI_PROMO_TIMEOUT_MS", "55000"))
+# Timeout por operação do Playwright na página da promo (click, wait, etc.)
+PROMO_OPERATION_TIMEOUT_MS = 15000
+
 # Seletores (classes podem variar com build; usar * quando estável)
 ACCORDION_BTN = "button.szh-accordion__item-btn"
 FLIGHT_BLOCK = "[class*='produtoIdaVolta_div_sections']"
@@ -102,7 +107,7 @@ def insert_raw(
 ) -> None:
     conn = psycopg2.connect(**DB_CONFIG)
     try:
-        with conn, conn.cursor() as cur:
+        with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO flight_prices_raw
@@ -123,6 +128,10 @@ def insert_raw(
                     json.dumps(payload, ensure_ascii=False),
                 ),
             )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -317,9 +326,14 @@ def expand_accordions_and_extract_flights(page, promo_url: str, promo_title: str
     """
     Abre a página da promoção. Para cada item do acordeão (cada origem→destino),
     expande o painel, espera o conteúdo e extrai todos os blocos produtoIdaVolta.
+    Usa timeout para não travar em página lenta.
     """
-    page.goto(promo_url, wait_until="domcontentloaded", timeout=30000)
-    page.wait_for_timeout(2000)
+    try:
+        page.set_default_timeout(PROMO_OPERATION_TIMEOUT_MS)
+        page.goto(promo_url, wait_until="domcontentloaded", timeout=PROMO_PAGE_TIMEOUT_MS)
+        page.wait_for_timeout(2000)
+    except Exception:
+        return []
 
     # Container do acordeão (vários itens: São Paulo→Punta Cana, Rio→Punta Cana, etc.)
     accordion = page.query_selector("#accordionElement")
@@ -337,10 +351,10 @@ def expand_accordions_and_extract_flights(page, promo_url: str, promo_title: str
             if not btn:
                 continue
             btn.scroll_into_view_if_needed()
-            page.wait_for_timeout(200)
+            page.wait_for_timeout(150)
             btn.click()
             # Conteúdo do painel pode carregar após o click
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(500)
             # Buscar blocos de voo apenas dentro deste item
             blocks = item.query_selector_all(FLIGHT_BLOCK)
             if blocks:
@@ -377,13 +391,18 @@ def run_once(page) -> int:
         print(f"\n>>> [{i+1}/{len(to_scan)}] Abrindo: {title[:50]}...")
         try:
             flights = expand_accordions_and_extract_flights(page, url, title)
-            for f in flights:
-                payload = {
-                    "promo_url": url,
-                    "promo_title": title,
-                    "price_text": f.get("price_text", ""),
-                    "source": SOURCE_NAME,
-                }
+        except Exception as e:
+            print(f"    !! Erro ao abrir/extrair: {e}")
+            continue
+        saved_this = 0
+        for f in flights:
+            payload = {
+                "promo_url": url,
+                "promo_title": title,
+                "price_text": f.get("price_text", ""),
+                "source": SOURCE_NAME,
+            }
+            try:
                 origin_n = normalize_airport_code(f["origin"])
                 dest_n = normalize_airport_code(f["destination"])
                 insert_raw(
@@ -394,11 +413,12 @@ def run_once(page) -> int:
                     f["price"],
                     payload,
                 )
+                saved_this += 1
                 total_saved += 1
-            if flights:
-                print(f"    -> {len(flights)} oferta(s) extraída(s) e salva(s).")
-        except Exception as e:
-            print(f"    !! Erro: {e}")
+            except Exception as e:
+                print(f"    !! Erro ao salvar {f.get('origin')}-{f.get('destination')}: {e}")
+        if flights:
+            print(f"    -> {len(flights)} oferta(s) extraída(s), {saved_this} salva(s) na base.")
 
     return total_saved
 
@@ -424,7 +444,11 @@ def run_once_single_url(page, url: str) -> int:
         return 0
     print(f">>> Varrendo apenas: {url[:70]}...")
     title = "Promo (URL única)"
-    flights = expand_accordions_and_extract_flights(page, url, title)
+    try:
+        flights = expand_accordions_and_extract_flights(page, url, title)
+    except Exception as e:
+        print(f">>> Erro ao extrair: {e}")
+        return 0
     total_saved = 0
     for f in flights:
         payload = {
@@ -433,18 +457,14 @@ def run_once_single_url(page, url: str) -> int:
             "price_text": f.get("price_text", ""),
             "source": SOURCE_NAME,
         }
-        origin_n = normalize_airport_code(f["origin"])
-        dest_n = normalize_airport_code(f["destination"])
-        insert_raw(
-            origin_n,
-            dest_n,
-            f["departure_date"],
-            f.get("return_date"),
-            f["price"],
-            payload,
-        )
-        total_saved += 1
-    print(f">>> Ofertas extraídas e salvas: {total_saved}")
+        try:
+            origin_n = normalize_airport_code(f["origin"])
+            dest_n = normalize_airport_code(f["destination"])
+            insert_raw(origin_n, dest_n, f["departure_date"], f.get("return_date"), f["price"], payload)
+            total_saved += 1
+        except Exception as e:
+            print(f">>> Erro ao salvar {f.get('origin')}-{f.get('destination')}: {e}")
+    print(f">>> Ofertas extraídas: {len(flights)}, salvas na base: {total_saved}")
     return total_saved
 
 
