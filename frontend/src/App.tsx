@@ -92,18 +92,18 @@ function App() {
   const originTrim = (origin || '').trim()
   const destinationTrim = (destination || '').trim()
   const filterRef = useRef({ origin: '', destination: '' })
-  const isInitialMount = useRef(true)
   useEffect(() => {
-    if (originTrim === filterRef.current.origin && destinationTrim === filterRef.current.destination) return
-    const prev = filterRef.current
+    const same = originTrim === filterRef.current.origin && destinationTrim === filterRef.current.destination
+    if (same) return
+    const hadFilter = filterRef.current.origin || filterRef.current.destination
     filterRef.current = { origin: originTrim, destination: destinationTrim }
-    if (isInitialMount.current) {
-      isInitialMount.current = false
-      if (!originTrim && !destinationTrim) return
+    // Sem filtro: só refaz a busca se o usuário limpou os campos (não no carregamento inicial)
+    if (!originTrim && !destinationTrim) {
+      if (!hadFilter) return
+      const t = setTimeout(() => loadDeals('', ''), 400)
+      return () => clearTimeout(t)
     }
-    const t = setTimeout(() => {
-      loadDeals(originTrim, destinationTrim)
-    }, 400)
+    const t = setTimeout(() => loadDeals(originTrim, destinationTrim), 400)
     return () => clearTimeout(t)
   }, [originTrim, destinationTrim, loadDeals])
 
