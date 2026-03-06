@@ -47,9 +47,33 @@ SECTION_DATA = "[class*='produtoIdaVolta_section_data']"
 # Rota (ex.: VCP -> MCO) pode estar em span com idaVolta ou no texto do bloco
 ROUTE_SPAN = "[class*='produtoIdaVolta_section_span_texto__idaVolta']"
 PRICE_SPAN = "[class*='produtoIdaVolta_section_preco']"
+# Header do item do acordeão (promos 2 em 1: origem + trechos 1. Lima, 2. Cusco + preço)
+ACCORDION_HEADER_CITY = "[class*='detalhesPublicacao_ion_content_accordion_item_div_aeroportos_span_city']"
+ACCORDION_HEADER_PRICE = "[class*='detalhesPublicacao_ion_content_accordion_item_div_aeroportos_span_valor']"
 
 # Códigos que devem ser normalizados para IATA (ex.: RIO -> GIG)
 AIRPORT_CODE_NORMALIZE = {"RIO": "GIG", "SAO": "GRU", "BHZ": "CNF", "MIL": "MXP", "NYC": "JFK"}
+
+# Nomes de cidades (como aparecem no header do acordeão) -> IATA (promos 2 em 1 / múltiplos destinos)
+CITY_TO_IATA = {
+    "são paulo": "GRU", "sao paulo": "GRU", "são paulo ": "GRU",
+    "rio de janeiro": "GIG", "rio": "GIG",
+    "belo horizonte": "CNF", "bh": "CNF",
+    "lima": "LIM", "cusco": "CUZ", "cusco ": "CUZ",
+    "buenos aires": "EZE", "santiago": "SCL", "santiago ": "SCL",
+    "cartagena": "CTG", "bogotá": "BOG", "bogota": "BOG", "medellin": "MDE", "medellín": "MDE",
+    "san andres": "ADZ", "santa marta": "SMR",
+    "cancún": "CUN", "cancun": "CUN", "cancún ": "CUN",
+    "punta cana": "PUJ", "kingston": "KIN", "jamaica": "KIN",
+    "aruba": "AUA", "oranjestad": "AUA",
+    "lisboa": "LIS", "lisboa ": "LIS", "portugal": "LIS",
+    "madri": "MAD", "madrid": "MAD",
+    "milão": "MXP", "milao": "MXP", "milão ": "MXP", "veneza": "VCE", "venezia": "VCE",
+    "genebra": "GVA", "zurique": "ZRH", "zurique ": "ZRH", "suíça": "GVA",
+    "toronto": "YYZ", "canadá": "YYZ", "canada": "YYZ",
+    "bariloche": "BRC", "mendoza": "MDZ", "cordoba": "COR", "córdoba": "COR",
+    "el calafate": "FTE", "ushuaia": "USH", "salta": "SLA", "rosario": "ROS", "jujuy": "JUJ", "mendo": "MDZ",
+}
 
 
 def normalize_airport_code(code: str) -> str:
@@ -57,6 +81,15 @@ def normalize_airport_code(code: str) -> str:
     if not code or not (code := (code or "").strip().upper()):
         return code or ""
     return AIRPORT_CODE_NORMALIZE.get(code, code)
+
+
+def city_name_to_iata(name: str) -> str:
+    """Converte nome de cidade (ex.: 'Lima', 'São Paulo') em código IATA para promos 2 em 1."""
+    if not name or not (s := (name or "").strip().lower()):
+        return ""
+    # Remove prefixos "1." "2." etc.
+    s = re.sub(r"^\d+\.\s*", "", s).strip()
+    return CITY_TO_IATA.get(s, s.upper() if len(s) == 3 else "")
 
 
 def insert_raw(
@@ -226,6 +259,60 @@ def _extract_flights_from_blocks(blocks, promo_url: str, promo_title: str) -> Li
     return flights
 
 
+def _extract_flights_from_accordion_header(
+    item, promo_url: str, promo_title: str
+) -> List[Dict[str, Any]]:
+    """
+    Quando o item do acordeão não tem blocos produtoIdaVolta (promo 2 em 1 com
+    Trechos: 1. Lima, 2. Cusco), extrai origem, destinos e preço do próprio header.
+    """
+    flights = []
+    try:
+        btn = item.query_selector(ACCORDION_BTN)
+        if not btn:
+            return []
+        city_els = btn.query_selector_all(ACCORDION_HEADER_CITY)
+        if len(city_els) < 2:
+            return []
+        # Primeiro span = origem; demais = destinos (podem ter "1. Lima", "2. Cusco")
+        origin_text = (city_els[0].inner_text() or "").strip()
+        origin = city_name_to_iata(origin_text)
+        if not origin and len(origin_text) == 3:
+            origin = normalize_airport_code(origin_text.upper())
+        if not origin:
+            return []
+
+        price_el = btn.query_selector(ACCORDION_HEADER_PRICE)
+        price_text = (price_el.inner_text() if price_el else "").strip()
+        price_brl = parse_price_brl(price_text)
+        if price_brl <= 0:
+            return []
+
+        # Placeholder quando a data não vem no header (promo "a partir de")
+        placeholder_date = date(2026, 1, 1)
+
+        for i in range(1, len(city_els)):
+            dest_text = (city_els[i].inner_text() or "").strip()
+            dest = city_name_to_iata(dest_text)
+            if not dest and len(dest_text) == 3:
+                dest = normalize_airport_code(dest_text.upper())
+            if not dest:
+                continue
+            flights.append({
+                "origin": origin,
+                "destination": dest,
+                "departure_date": placeholder_date,
+                "return_date": None,
+                "price": price_brl,
+                "price_text": price_text,
+                "promo_url": promo_url,
+                "promo_title": promo_title,
+            })
+    except Exception:
+        pass
+    return flights
+
+
 def expand_accordions_and_extract_flights(page, promo_url: str, promo_title: str) -> List[Dict[str, Any]]:
     """
     Abre a página da promoção. Para cada item do acordeão (cada origem→destino),
@@ -258,6 +345,9 @@ def expand_accordions_and_extract_flights(page, promo_url: str, promo_title: str
             blocks = item.query_selector_all(FLIGHT_BLOCK)
             if blocks:
                 all_flights.extend(_extract_flights_from_blocks(blocks, promo_url, promo_title))
+            else:
+                # Promo 2 em 1: sem blocos produtoIdaVolta; extrair do header (origem + trechos 1. Lima, 2. Cusco)
+                all_flights.extend(_extract_flights_from_accordion_header(item, promo_url, promo_title))
         except Exception:
             continue
 
