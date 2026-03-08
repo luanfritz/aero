@@ -618,8 +618,10 @@ async def run_batch():
             page = context.pages[0] if context.pages else await context.new_page()
             browser = None
         else:
+            # channel="chrome" usa o Chrome instalado no sistema (não o "Chrome for Testing"), menos detectável
             browser = await p.chromium.launch(
                 headless=HEADLESS,
+                channel="chrome",
                 args=stealth_args,
             )
             context = await browser.new_context(**context_options)
