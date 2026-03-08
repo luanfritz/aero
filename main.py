@@ -29,7 +29,7 @@ CURRENCY = "BRL"
 
 MAX_ROUTES_PER_RUN = None        # None = todas as rotas elegíveis do DB
 MAX_OFFERS_PER_ROUTE = 25        # limita quantos cards por rota (pra não demorar demais)
-DELAY_MS_BETWEEN_ROUTES = (2500, 6000)  # pausa aleatória (min, max)
+DELAY_MS_BETWEEN_ROUTES = (8000, 18000)  # pausa entre rotas (mais lento = mais humano)
 ROUTE_TIMEOUT_S = 120  # evita travamento em rota problemática
 
 # Debug temporário: focar em uma rota até estabilizar o scraper
@@ -45,7 +45,10 @@ USE_PERSISTENT_PROFILE = False
 USER_DATA_DIR = ".playwright_viajanet_profile"
 
 # Abrir a homepage do ViajaNet antes das rotas para o verificador "é humano" aparecer e ser resolvido (em headed).
-WARMUP_HOMEPAGE_MS = 12000 if not HEADLESS else 0
+# Tempo longo para você marcar o check e para o site não achar que "continuamos rápido demais" depois.
+WARMUP_HOMEPAGE_MS = 30000 if not HEADLESS else 0
+# Pausa extra após o warmup antes da primeira rota (evita "clicou e já navegou").
+POST_WARMUP_DELAY_MS = (10000, 25000)
 
 # Só refazer rotas cuja última coleta foi há mais de 6 horas (exige coluna de timestamp em flight_prices_raw)
 MIN_HOURS_SINCE_LAST_SCRAPE = 6
@@ -350,6 +353,35 @@ def is_valid_route_url(url: str, origin: str, destination: str) -> bool:
     return host.endswith("viajanet.com.br") and path.startswith(expected_prefix)
 
 
+def is_datadome_captcha_page(html: str) -> bool:
+    """Detecta a página de desafio DataDome (captcha-delivery.com)."""
+    if not html:
+        return False
+    return "captcha-delivery.com" in html or "DataDome CAPTCHA" in html
+
+
+async def wait_for_datadome_solve(page: Page, timeout_ms: int = 120000) -> bool:
+    """
+    Se a página atual for DataDome, espera o usuário resolver no navegador (só em modo headed).
+    Retorna True se saiu do captcha (ou não estava em captcha), False se deu timeout.
+    """
+    if HEADLESS:
+        return False
+    step_ms = 5000
+    elapsed = 0
+    while elapsed < timeout_ms:
+        try:
+            content = await page.content()
+            if not is_datadome_captcha_page(content):
+                return True
+        except Exception:
+            return False
+        print(f"   ⏳ DataDome detectado. Resolva o captcha no navegador. (aguardando até {timeout_ms//1000}s)")
+        await page.wait_for_timeout(step_ms)
+        elapsed += step_ms
+    return False
+
+
 # ==========================
 # SCRAPER CORE
 # ==========================
@@ -366,20 +398,30 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
     valid_navigation = False
 
     for candidate_url in urls:
+        await page.wait_for_timeout(random.randint(1500, 4000))  # pausa antes de navegar (mais humano)
         await page.goto(candidate_url, wait_until="load", timeout=60000)
         await page.wait_for_timeout(10000)
 
-        current_url = page.url
+        content = await page.content()
+        if is_datadome_captcha_page(content):
+            print("   DataDome na rota — resolva o captcha no navegador.")
+            if await wait_for_datadome_solve(page, timeout_ms=120000):
+                await page.wait_for_timeout(3000)
+            content = await page.content()
+            current_url = page.url
+        else:
+            current_url = page.url
+
         if is_home_redirect(current_url):
             print(f"⚠️ Redirect para home em {candidate_url}: {current_url}")
             continue
 
-        if is_valid_route_url(current_url, origin_hint, destination_hint):
+        if is_valid_route_url(current_url, origin_hint, destination_hint) and not is_datadome_captcha_page(content):
             url = current_url
             valid_navigation = True
             break
 
-        html_len = len(await page.content())
+        html_len = len(content)
         print(f"⚠️ URL inesperada ({current_url}) / HTML {html_len} em {candidate_url}, tentando variante...")
 
     if not valid_navigation:
@@ -594,13 +636,20 @@ async def run_batch():
         page.set_default_timeout(30000)
 
         if WARMUP_HOMEPAGE_MS > 0:
-            print("🌐 Abrindo homepage do ViajaNet para aquecimento (verificador pode aparecer aqui)...")
+            print("🌐 Abrindo homepage do ViajaNet para aquecimento (resolva o verificador aqui)...")
             try:
-                await page.goto("https://www.viajanet.com.br/", wait_until="domcontentloaded", timeout=25000)
+                await page.goto("https://www.viajanet.com.br/", wait_until="load", timeout=30000)
                 await page.wait_for_timeout(WARMUP_HOMEPAGE_MS)
+                content = await page.content()
+                if is_datadome_captcha_page(content):
+                    print("   Página DataDome detectada. Resolva o captcha no navegador.")
+                    await wait_for_datadome_solve(page, timeout_ms=120000)
             except Exception as e:
                 print(f"   (aquecimento: {e})")
-            print("   Continuando para as rotas.\n")
+            post_delay = random.randint(*POST_WARMUP_DELAY_MS)
+            print(f"   Aguardando mais {post_delay/1000:.0f}s antes das rotas (ritmo mais humano)...")
+            await page.wait_for_timeout(post_delay)
+            print("   Iniciando rotas.\n")
 
         total_saved = 0
 
