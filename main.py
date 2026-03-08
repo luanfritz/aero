@@ -39,6 +39,14 @@ FOCUS_ROUTE = ("BSB", "REC")
 # ViajaNet detecta headless e retorna página vazia; usar headed para carregar o Angular
 HEADLESS = False
 
+# Perfil persistente: use True e rode uma vez; passe o verificador "é humano" no navegador que abrir.
+# Feche o navegador. Nas próximas execuções o mesmo perfil (cookies/sessão) será reutilizado.
+USE_PERSISTENT_PROFILE = False
+USER_DATA_DIR = ".playwright_viajanet_profile"
+
+# Abrir a homepage do ViajaNet antes das rotas para o verificador "é humano" aparecer e ser resolvido (em headed).
+WARMUP_HOMEPAGE_MS = 12000 if not HEADLESS else 0
+
 # Só refazer rotas cuja última coleta foi há mais de 6 horas (exige coluna de timestamp em flight_prices_raw)
 MIN_HOURS_SINCE_LAST_SCRAPE = 6
 # Nome da coluna de data/hora em flight_prices_raw (ex.: "inserted_at", "scraped_at"). None = desativa o filtro de 6h
@@ -539,20 +547,60 @@ async def run_batch():
             print("❌ Nenhuma rota na tabela routes.")
             return
 
+    import os
+
     async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=HEADLESS,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-        )
-        context = await browser.new_context(
-            locale="pt-BR",
-            viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            java_script_enabled=True,
-        )
+        context_options = {
+            "locale": "pt-BR",
+            "viewport": {"width": 1920, "height": 1080},
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "java_script_enabled": True,
+            "ignore_https_errors": False,
+        }
+        stealth_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-infobars",
+            "--disable-dev-shm-usage",
+            "--disable-browser-side-navigation",
+        ]
+
+        if USE_PERSISTENT_PROFILE:
+            # Perfil persistente: cookies/sessão salvos. Rode 1x, passe o verificador no Chrome que abrir, feche.
+            user_data = os.path.abspath(USER_DATA_DIR)
+            context = await p.chromium.launch_persistent_context(
+                user_data_dir=user_data,
+                headless=HEADLESS,
+                channel="chrome",
+                args=stealth_args,
+                **context_options,
+            )
+            print("📁 Perfil persistente: se for a 1ª vez, passe o verificador 'é humano' no navegador e feche ao terminar.")
+            page = context.pages[0] if context.pages else await context.new_page()
+            browser = None
+        else:
+            browser = await p.chromium.launch(
+                headless=HEADLESS,
+                args=stealth_args,
+            )
+            context = await browser.new_context(**context_options)
+
+        # Reduzir sinal de automação
         await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        page = await context.new_page()
+        await context.add_init_script("""Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt', 'en-US', 'en']})""")
+
+        if not USE_PERSISTENT_PROFILE:
+            page = await context.new_page()
         page.set_default_timeout(30000)
+
+        if WARMUP_HOMEPAGE_MS > 0:
+            print("🌐 Abrindo homepage do ViajaNet para aquecimento (verificador pode aparecer aqui)...")
+            try:
+                await page.goto("https://www.viajanet.com.br/", wait_until="domcontentloaded", timeout=25000)
+                await page.wait_for_timeout(WARMUP_HOMEPAGE_MS)
+            except Exception as e:
+                print(f"   (aquecimento: {e})")
+            print("   Continuando para as rotas.\n")
 
         total_saved = 0
 
@@ -570,7 +618,10 @@ async def run_batch():
             # pausa aleatória entre rotas
             await page.wait_for_timeout(random.randint(*DELAY_MS_BETWEEN_ROUTES))
 
-        await browser.close()
+        if browser:
+            await browser.close()
+        else:
+            await context.close()
 
     print(f"\n🎉 Total salvo nesta execução: {total_saved}")
 

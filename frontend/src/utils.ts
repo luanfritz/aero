@@ -14,13 +14,41 @@ export function formatPrice(n: number): string {
   return 'R$ ' + Number(n).toLocaleString('pt-BR')
 }
 
+/** Formata data para exibição em dd/mm/yyyy (padrão BR). */
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('pt-BR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  })
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '—'
+  const day = String(d.getDate()).padStart(2, '0')
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const year = d.getFullYear()
+  return `${day}/${month}/${year}`
+}
+
+/** Converte yyyy-mm-dd para dd/mm/yyyy (para input de texto). */
+export function toDdMmYyyy(yyyyMmDd: string): string {
+  if (!yyyyMmDd || yyyyMmDd.length < 10) return ''
+  const [y, m, d] = yyyyMmDd.slice(0, 10).split('-')
+  if (!y || !m || !d) return yyyyMmDd
+  return `${d}/${m}/${y}`
+}
+
+/** Parse dd/mm/yyyy ou dd-mm-yyyy ou yyyy-mm-dd → yyyy-mm-dd. Retorna '' se inválido. */
+export function parseDateInputToYyyyMmDd(val: string): string {
+  val = (val || '').trim()
+  if (!val) return ''
+  const d = new Date(val)
+  if (!isNaN(d.getTime())) return toYyyyMmDd(d)
+  const match = val.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/)
+  if (match) {
+    const [, d_, m, y] = match
+    const day = parseInt(d_, 10)
+    const month = parseInt(m, 10) - 1
+    const year = parseInt(y, 10)
+    const date = new Date(year, month, day)
+    if (!isNaN(date.getTime()) && date.getDate() === day) return toYyyyMmDd(date)
+  }
+  return ''
 }
 
 /** Retorna a quantidade de dias entre data de ida e data de volta (inclusive). Ida só = null. */
