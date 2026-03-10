@@ -7,10 +7,15 @@ import { parseAirportInput } from '../utils'
 import '../App.css'
 import './AlertasPage.css'
 
+type PeriodType = 'any' | 'date' | 'month'
+
 export function AlertasPage() {
   const [phone, setPhone] = useState('')
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
+  const [periodType, setPeriodType] = useState<PeriodType>('any')
+  const [preferredDate, setPreferredDate] = useState('')
+  const [preferredMonth, setPreferredMonth] = useState('')
   const [options, setOptions] = useState<AirportOption[]>([])
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState<string | null>(null)
@@ -48,12 +53,16 @@ export function AlertasPage() {
       setError('Selecione o destino.')
       return
     }
-    setLoading(true)
-    createAlertSubscription({
+    const body: Parameters<typeof createAlertSubscription>[0] = {
       phone: phone.trim(),
       origin: originCode,
       destination: destCode,
-    })
+    }
+    if (periodType === 'date' && preferredDate) body.preferred_date = preferredDate
+    if (periodType === 'month' && preferredMonth) body.preferred_month = preferredMonth
+
+    setLoading(true)
+    createAlertSubscription(body)
       .then((sub) => {
         setSuccess(
           sub.whatsapp_sent
@@ -128,6 +137,60 @@ export function AlertasPage() {
                   <option key={o.code} value={displayOption(o)} />
                 ))}
               </datalist>
+            </div>
+
+            <div className="alertas-field">
+              <span className="alertas-label">Período de interesse</span>
+              <div className="alertas-period-options">
+                <label className="alertas-radio">
+                  <input
+                    type="radio"
+                    name="period"
+                    checked={periodType === 'any'}
+                    onChange={() => setPeriodType('any')}
+                    disabled={loading}
+                  />
+                  Qualquer oferta recente
+                </label>
+                <label className="alertas-radio">
+                  <input
+                    type="radio"
+                    name="period"
+                    checked={periodType === 'date'}
+                    onChange={() => setPeriodType('date')}
+                    disabled={loading}
+                  />
+                  Data específica
+                </label>
+                <label className="alertas-radio">
+                  <input
+                    type="radio"
+                    name="period"
+                    checked={periodType === 'month'}
+                    onChange={() => setPeriodType('month')}
+                    disabled={loading}
+                  />
+                  Mês específico
+                </label>
+              </div>
+              {periodType === 'date' && (
+                <input
+                  type="date"
+                  className="alertas-date-input"
+                  value={preferredDate}
+                  onChange={(e) => setPreferredDate(e.target.value)}
+                  disabled={loading}
+                />
+              )}
+              {periodType === 'month' && (
+                <input
+                  type="month"
+                  className="alertas-date-input"
+                  value={preferredMonth}
+                  onChange={(e) => setPreferredMonth(e.target.value)}
+                  disabled={loading}
+                />
+              )}
             </div>
 
             {error && <p className="alertas-msg alertas-error">{error}</p>}

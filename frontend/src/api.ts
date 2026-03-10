@@ -70,6 +70,8 @@ export interface AlertSubscription {
   phone: string
   origin: string
   destination: string
+  preferred_date?: string | null
+  preferred_month?: string | null
   active: boolean
   created_at: string
   whatsapp_sent?: boolean
@@ -79,6 +81,8 @@ export async function createAlertSubscription(body: {
   phone: string
   origin: string
   destination: string
+  preferred_date?: string
+  preferred_month?: string
 }): Promise<AlertSubscription> {
   const res = await fetch(`${API}/alert-subscriptions`, {
     method: 'POST',
@@ -105,4 +109,56 @@ export async function deleteAlertSubscription(id: number): Promise<void> {
     const data = await res.json().catch(() => ({}))
     throw new Error(data?.error || `${res.status}`)
   }
+}
+
+// ---------- Admin ----------
+const ADMIN_TOKEN_KEY = 'voala_admin_token'
+
+export function getAdminToken(): string | null {
+  return sessionStorage.getItem(ADMIN_TOKEN_KEY)
+}
+
+export function setAdminToken(token: string): void {
+  sessionStorage.setItem(ADMIN_TOKEN_KEY, token)
+}
+
+export function clearAdminToken(): void {
+  sessionStorage.removeItem(ADMIN_TOKEN_KEY)
+}
+
+function adminHeaders(): Record<string, string> {
+  const t = getAdminToken()
+  return t ? { 'X-Admin-Token': t } : {}
+}
+
+export async function fetchAdminAlertSubscriptions(params?: {
+  active_only?: boolean
+  phone?: string
+  origin?: string
+  destination?: string
+}): Promise<AlertSubscription[]> {
+  const search = new URLSearchParams()
+  if (params?.active_only) search.set('active_only', '1')
+  if (params?.phone) search.set('phone', params.phone)
+  if (params?.origin) search.set('origin', params.origin)
+  if (params?.destination) search.set('destination', params.destination)
+  const qs = search.toString()
+  const url = qs ? `${API}/admin/alert-subscriptions?${qs}` : `${API}/admin/alert-subscriptions`
+  const res = await fetch(url, { headers: adminHeaders() })
+  if (res.status === 403) throw new Error('Token inválido ou ausente')
+  if (!res.ok) throw new Error(`${res.status}`)
+  const data = await res.json()
+  if (data?.error) throw new Error(data.error)
+  return Array.isArray(data) ? data : []
+}
+
+export async function sendAlertsNow(): Promise<{ sent: number; message?: string }> {
+  const res = await fetch(`${API}/admin/send-alerts`, {
+    method: 'POST',
+    headers: adminHeaders(),
+  })
+  const data = await res.json()
+  if (res.status === 403) throw new Error('Token inválido ou ausente')
+  if (data?.error) throw new Error(data.error)
+  return { sent: data.sent ?? 0, message: data.message }
 }

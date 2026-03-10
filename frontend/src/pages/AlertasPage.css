@@ -60,6 +60,39 @@
   box-shadow: var(--shadow-focus);
 }
 
+.alertas-label {
+  font-size: var(--text-label);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: var(--space-sm);
+}
+
+.alertas-period-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+}
+
+.alertas-radio {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: var(--text-body);
+  cursor: pointer;
+}
+
+.alertas-radio input {
+  margin: 0;
+}
+
+.alertas-date-input {
+  margin-top: var(--space-xs);
+}
+
 .alertas-field input::placeholder {
   color: var(--text-muted);
   opacity: 0.8;
