@@ -36,10 +36,14 @@ FOCUS_ROUTE = ("BSB", "REC")
 # ViajaNet detecta headless e retorna página vazia; usar headed para carregar o Angular
 HEADLESS = False
 
-# Perfil persistente: use True e rode uma vez; passe o verificador "é humano" no navegador que abrir.
-# Feche o navegador. Nas próximas execuções o mesmo perfil (cookies/sessão) será reutilizado.
-USE_PERSISTENT_PROFILE = False
+# Perfil persistente: reutiliza cookies/sessão entre execuções (recomendado para evitar bloqueio).
+# Rode 1x, passe o verificador no navegador que abrir, feche; nas próximas o mesmo perfil é usado.
+USE_PERSISTENT_PROFILE = True
 USER_DATA_DIR = ".playwright_viajanet_profile"
+
+# Usar o perfil do seu Chrome (onde você já acessa o ViajaNet). FECHE O CHROME antes de rodar o script.
+# Assim o scraping usa os mesmos cookies/sessão do seu navegador normal.
+USE_SYSTEM_CHROME_PROFILE = False
 
 # Abrir a homepage do ViajaNet antes das rotas para o verificador "é humano" aparecer e ser resolvido (em headed).
 # Tempo longo para você marcar o check e para o site não achar que "continuamos rápido demais" depois.
@@ -577,6 +581,9 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
 
 
 async def run_batch():
+    if USE_SYSTEM_CHROME_PROFILE:
+        print("⚠️ USE_SYSTEM_CHROME_PROFILE ativo: feche o Chrome completamente antes de o script abrir o navegador.\n")
+
     if FOCUS_ROUTE_ONLY:
         routes = [FOCUS_ROUTE]
         print(f"🎯 Modo foco ativo: processando apenas {FOCUS_ROUTE[0]}->{FOCUS_ROUTE[1]}")
@@ -587,6 +594,13 @@ async def run_batch():
             return
 
     import os
+
+    def _chrome_user_data_dir():
+        if USE_SYSTEM_CHROME_PROFILE:
+            # Perfil do Chrome instalado (Windows). Feche o Chrome antes de rodar.
+            base = os.path.expanduser("~")
+            return os.path.join(base, "AppData", "Local", "Google", "Chrome", "User Data")
+        return os.path.abspath(USER_DATA_DIR)
 
     async with async_playwright() as p:
         context_options = {
@@ -604,9 +618,9 @@ async def run_batch():
             "--disable-browser-side-navigation",
         ]
 
-        if USE_PERSISTENT_PROFILE:
-            # Perfil persistente: cookies/sessão salvos. Rode 1x, passe o verificador no Chrome que abrir, feche.
-            user_data = os.path.abspath(USER_DATA_DIR)
+        use_persistent = USE_PERSISTENT_PROFILE or USE_SYSTEM_CHROME_PROFILE
+        if use_persistent:
+            user_data = _chrome_user_data_dir()
             context = await p.chromium.launch_persistent_context(
                 user_data_dir=user_data,
                 headless=HEADLESS,
@@ -614,7 +628,10 @@ async def run_batch():
                 args=stealth_args,
                 **context_options,
             )
-            print("📁 Perfil persistente: se for a 1ª vez, passe o verificador 'é humano' no navegador e feche ao terminar.")
+            if USE_SYSTEM_CHROME_PROFILE:
+                print("📁 Usando perfil do seu Chrome (mesmos cookies do navegador onde você já acessa o ViajaNet).")
+            else:
+                print("📁 Perfil persistente: na 1ª vez passe o verificador no navegador; nas próximas o mesmo perfil será usado.")
             page = context.pages[0] if context.pages else await context.new_page()
             browser = None
         else:
@@ -630,7 +647,7 @@ async def run_batch():
         await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         await context.add_init_script("""Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt', 'en-US', 'en']})""")
 
-        if not USE_PERSISTENT_PROFILE:
+        if not use_persistent:
             page = await context.new_page()
         page.set_default_timeout(30000)
 

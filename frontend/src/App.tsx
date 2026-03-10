@@ -99,11 +99,9 @@ function App() {
       .finally(() => setListLoading(false))
   }, [])
 
+  // Carregar home e autocomplete em paralelo para reduzir tempo até exibir conteúdo
   useEffect(() => {
     loadOriginsDestinations()
-  }, [])
-
-  useEffect(() => {
     loadDeals()
   }, [loadDeals])
 

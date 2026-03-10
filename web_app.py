@@ -7,6 +7,7 @@ Rode: python web_app.py  ->  http://localhost:5000
 import json
 import os
 import sys
+import time
 from datetime import date, datetime
 
 # Garante que o diretório do projeto está no path
@@ -19,6 +20,14 @@ from psycopg2.extras import RealDictCursor
 
 import main
 from opportunities_engine import generate_opportunities, build_search_url
+
+# Cache em memória para reduzir carga no BD (TTL em segundos)
+_CACHE_ORIGINS_TTL = int(os.environ.get("CACHE_ORIGINS_TTL", "120"))  # 2 min
+_CACHE_HOME_OPPORTUNITIES_TTL = int(os.environ.get("CACHE_HOME_OPPORTUNITIES_TTL", "90"))  # 1.5 min
+_cache_origins = None
+_cache_origins_ts = 0
+_cache_home_opportunities = None
+_cache_home_opportunities_ts = 0
 
 # Frontend único: build Vite + React em frontend/dist
 _static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
@@ -108,9 +117,15 @@ def api_sources():
 
 @app.route("/api/origins_destinations")
 def api_origins_destinations():
-    """Retorna listas de origens e destinos para autocomplete."""
+    """Retorna listas de origens e destinos para autocomplete (com cache)."""
+    global _cache_origins, _cache_origins_ts
     try:
+        now = time.time()
+        if _cache_origins is not None and (now - _cache_origins_ts) < _CACHE_ORIGINS_TTL:
+            return jsonify(_cache_origins)
         data = _get_origins_destinations()
+        _cache_origins = data
+        _cache_origins_ts = now
         return jsonify(data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -300,26 +315,31 @@ def api_deals():
 def _get_opportunities_filtered(origin: str = None, destination: str = None, days_lookback: int = 60, limit: int = 1000):
     """
     Busca em flight_prices_raw todas as ofertas que batem com o filtro (origin e/ou destination).
-    Usado quando o usuário filtra pelo campo de pesquisa para listar todas as ofertas cadastradas.
+    Usa match exato quando o valor é código IATA (3 letras) para aproveitar índice.
     """
     origin = (origin or "").strip().upper() or None
     destination = (destination or "").strip().upper() or None
     if not origin and not destination:
-        return None  # sem filtro: usar generate_opportunities
+        return None
     conn = psycopg2.connect(**main.DB_CONFIG)
     try:
         where_parts = ["(origin IS NOT NULL AND origin != '')", "(destination IS NOT NULL AND destination != '')"]
         params = []
-        # Sempre usar LIKE %valor% para aceitar código (CNF) ou nome (Belo Horizonte) no banco
-        def like_param(val: str) -> str:
-            v = (val or "").replace("%", "\\%").replace("_", "\\_")
-            return "%" + v + "%"
-        if origin:
-            where_parts.append("UPPER(TRIM(origin)) LIKE UPPER(%s)")
-            params.append(like_param(origin))
-        if destination:
-            where_parts.append("UPPER(TRIM(destination)) LIKE UPPER(%s)")
-            params.append(like_param(destination))
+
+        def add_origin_dest(field: str, val: str) -> None:
+            if not val:
+                return
+            # Código IATA (3 letras) → match exato (usa índice)
+            if len(val) == 3 and val.isalpha():
+                where_parts.append(f"UPPER(TRIM({field})) = %s")
+                params.append(val)
+            else:
+                v = val.replace("%", "\\%").replace("_", "\\_")
+                where_parts.append(f"UPPER(TRIM({field})) LIKE UPPER(%s)")
+                params.append("%" + v + "%")
+
+        add_origin_dest("origin", origin or "")
+        add_origin_dest("destination", destination or "")
         where_parts.append("(scraped_at IS NULL OR scraped_at >= now() - (%s * interval '1 day'))")
         params.extend([days_lookback, limit])
         sql = """
@@ -386,9 +406,14 @@ def api_opportunities():
             # for_home=1: mínimo para os 9 cards, janela curta (7 dias) para resposta rápida
             for_home = request.args.get("for_home", "").strip().lower() in ("1", "true", "yes")
             if for_home:
+                global _cache_home_opportunities, _cache_home_opportunities_ts
+                now = time.time()
+                if (_cache_home_opportunities is not None and
+                        (now - _cache_home_opportunities_ts) < _CACHE_HOME_OPPORTUNITIES_TTL):
+                    return jsonify(_serialize(_cache_home_opportunities))
                 max_routes, max_per_route = 10, 3
-                days_lookback_home = 7  # janela curta = menos linhas
-                max_raw_rows = 3000  # cap de linhas lidas = resposta muito mais rápida
+                days_lookback_home = 7
+                max_raw_rows = 2500  # cap para resposta rápida
             else:
                 max_routes, max_per_route = 60, 10
                 days_lookback_home = days
@@ -402,6 +427,9 @@ def api_opportunities():
                 max_raw_rows=max_raw_rows,
                 silent=True,
             )
+            if for_home:
+                _cache_home_opportunities = opportunities
+                _cache_home_opportunities_ts = time.time()
         return jsonify(_serialize(opportunities))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
