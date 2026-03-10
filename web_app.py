@@ -630,11 +630,26 @@ def api_admin_send_alerts():
         return jsonify({"error": str(e), "sent": 0}), 500
 
 
-@app.route("/")
-def index():
+def _serve_index():
+    """Serve index.html da SPA (para rotas do React Router)."""
     if _HAS_BUILD:
         return send_from_directory(app.static_folder, "index.html")
     return Response(_HTML_BUILD_FIRST, mimetype="text/html; charset=utf-8")
+
+
+@app.route("/")
+def index():
+    return _serve_index()
+
+
+@app.route("/alertas")
+def spa_alertas():
+    return _serve_index()
+
+
+@app.route("/admin/alertas")
+def spa_admin_alertas():
+    return _serve_index()
 
 
 @app.route("/favicon.ico")
@@ -647,7 +662,7 @@ def favicon():
 def static_files(path):
     if not _HAS_BUILD:
         return Response(_HTML_BUILD_FIRST, mimetype="text/html; charset=utf-8")
-    # SPA: rotas como /alertas não são arquivos; servir index.html para o React Router
+    # SPA: rotas sem extensão de arquivo → index.html
     if not path or "." not in path.split("/")[-1]:
         return send_from_directory(app.static_folder, "index.html")
     try:
