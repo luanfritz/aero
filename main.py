@@ -51,6 +51,9 @@ WARMUP_HOMEPAGE_MS = 30000 if not HEADLESS else 0
 # Pausa extra após o warmup antes da primeira rota (evita "clicou e já navegou").
 POST_WARMUP_DELAY_MS = (10000, 25000)
 
+# Serviço contínuo: ao terminar um ciclo, aguarda este tempo (segundos) e reinicia. 0 = reiniciar logo.
+PAUSE_BETWEEN_CYCLES_SEC = 300  # 5 min entre ciclos
+
 # Só refazer rotas cuja última coleta foi há mais de 6 horas (exige coluna de timestamp em flight_prices_raw)
 MIN_HOURS_SINCE_LAST_SCRAPE = 6
 # Nome da coluna de data/hora em flight_prices_raw (ex.: "inserted_at", "scraped_at"). None = desativa o filtro de 6h
@@ -689,7 +692,29 @@ async def run_batch():
             await context.close()
 
     print(f"\n🎉 Total salvo nesta execução: {total_saved}")
+    return total_saved
+
+
+async def run_service():
+    """Roda o scraping em loop contínuo: ao terminar um ciclo, aguarda e reinicia (Ctrl+C para encerrar)."""
+    cycle = 0
+    print("🔄 Serviço ViajaNet: rodando em loop. Pressione Ctrl+C para parar.\n")
+    try:
+        while True:
+            cycle += 1
+            print(f"\n{'='*60}")
+            print(f"  CICLO {cycle}")
+            print(f"{'='*60}\n")
+            await run_batch()
+            if PAUSE_BETWEEN_CYCLES_SEC > 0:
+                print(f"\n⏸️  Próximo ciclo em {PAUSE_BETWEEN_CYCLES_SEC}s...")
+                await asyncio.sleep(PAUSE_BETWEEN_CYCLES_SEC)
+            else:
+                print("\n⏸️  Reiniciando em 5s...")
+                await asyncio.sleep(5)
+    except KeyboardInterrupt:
+        print("\n\n🛑 Serviço encerrado pelo usuário (Ctrl+C).")
 
 
 if __name__ == "__main__":
-    asyncio.run(run_batch())
+    asyncio.run(run_service())
