@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { fetchOpportunities, fetchOriginsDestinations } from '../api'
 import type { Offer, RouteWithOffers, AirportOption } from '../types'
 import { parseAirportInput, parseDateOnly, parseMonthInput } from '../utils'
@@ -200,6 +201,12 @@ export function HomePage() {
           onRefresh={() => loadDeals(originTrim, destinationTrim)}
           onFilterChange={onFilterChange}
         />
+
+        <div className="home-alertas-cta">
+          <Link to="/alertas" className="home-alertas-btn">
+            Receber alertas por WhatsApp
+          </Link>
+        </div>
 
         {uiState === 'loading' && (
           <div className="state state-loading">

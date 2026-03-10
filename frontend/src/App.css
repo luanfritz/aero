@@ -18,3 +18,24 @@
 .footer strong {
   color: var(--text);
 }
+
+.home-alertas-cta {
+  margin: var(--space-lg) 0 var(--space-xl);
+  text-align: center;
+}
+
+.home-alertas-btn {
+  display: inline-block;
+  padding: var(--space-md) var(--space-xl);
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transition: background 0.2s;
+}
+
+.home-alertas-btn:hover {
+  background: var(--accent-hover);
+}
