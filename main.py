@@ -2,6 +2,7 @@ import asyncio
 import json
 import random
 import re
+import sys
 from datetime import date
 from urllib.parse import urlparse
 from typing import Optional, Tuple, List
@@ -158,7 +159,19 @@ def upsert_route_source_status(origin: str, destination: str, status: str, reaso
         conn.close()
 
 
-def insert_raw(origin: str, destination: str, dep: date, ret: Optional[date], price_brl: int, payload: dict) -> None:
+def _send_alerts_for_new_offer(
+    origin: str, destination: str, dep: date, ret: Optional[date], price_brl: int
+) -> None:
+    """Notifica inscritos quando um novo voo é cadastrado (data/mês conforme preferência)."""
+    try:
+        from alerts_engine import send_alerts_for_new_offer
+        send_alerts_for_new_offer(DB_CONFIG, origin, destination, dep, ret, price_brl)
+    except Exception as e:
+        print(f">>> [main] Alerta para novo voo: {e}", file=sys.stderr)
+
+
+def insert_raw(origin: str, destination: str, dep: date, ret: Optional[date], price_brl: int, payload: dict) -> bool:
+    """Insere oferta no BD. Retorna True se inseriu (novo); False se já existia (conflito)."""
     conn = psycopg2.connect(**DB_CONFIG)
     try:
         with conn, conn.cursor() as cur:
@@ -182,6 +195,7 @@ def insert_raw(origin: str, destination: str, dep: date, ret: Optional[date], pr
                     json.dumps(payload, ensure_ascii=False),
                 )
             )
+            return cur.rowcount == 1
     finally:
         conn.close()
 
@@ -506,8 +520,9 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
                 "destination_hint": destination_hint,
                 "extraction_mode": "html_fallback",
             }
-            insert_raw(origin, destination, dep_date, None, price_brl, payload)
-            saved += 1
+            if insert_raw(origin, destination, dep_date, None, price_brl, payload):
+                saved += 1
+                _send_alerts_for_new_offer(origin, destination, dep_date, None, price_brl)
 
         print(f"✅ Salvos via fallback para {origin_hint}->{destination_hint}: {saved}")
         return saved
@@ -576,8 +591,9 @@ async def scrape_route(page: Page, origin_hint: str, destination_hint: str) -> i
             "destination_hint": destination_hint,
         }
 
-        insert_raw(origin, destination, dep_date, ret_date, price_brl, payload)
-        saved += 1
+        if insert_raw(origin, destination, dep_date, ret_date, price_brl, payload):
+            saved += 1
+            _send_alerts_for_new_offer(origin, destination, dep_date, ret_date, price_brl)
 
     print(f"✅ Salvos (raw) para {origin_hint}->{destination_hint}: {saved}")
     return saved

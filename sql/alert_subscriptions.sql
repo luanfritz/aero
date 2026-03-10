@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS alert_subscriptions (
   phone VARCHAR(20) NOT NULL,
   origin VARCHAR(10) NOT NULL,
   destination VARCHAR(10) NOT NULL,
+  preferred_date DATE,
+  preferred_month VARCHAR(7),
   active BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT alert_subscriptions_phone_origin_dest_unique UNIQUE (phone, origin, destination)

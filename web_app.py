@@ -9,6 +9,7 @@ import os
 import sys
 import time
 from datetime import date, datetime
+from typing import Optional
 
 # Garante que o diretório do projeto está no path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -445,21 +446,33 @@ def _normalize_phone(phone):
 
 
 def _send_whatsapp(to_phone: str, body: str) -> bool:
-    """Envia mensagem WhatsApp via Twilio. Retorna True se enviou. Requer TWILIO_* no ambiente."""
-    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
-    from_whatsapp = os.environ.get("TWILIO_WHATSAPP_FROM")  # ex: whatsapp:+14155238886
-    if not all([account_sid, auth_token, from_whatsapp]):
-        return False
+    """Delega para whatsapp_sender (Evolution ou Twilio)."""
     try:
-        from twilio.rest import Client
-        client = Client(account_sid, auth_token)
-        to = to_phone if to_phone.startswith("whatsapp:") else f"whatsapp:+{to_phone}"
-        client.messages.create(body=body, from_=from_whatsapp, to=to)
-        return True
+        from whatsapp_sender import send_whatsapp
+        return send_whatsapp(to_phone, body)
     except Exception as e:
         print(">>> [web_app] WhatsApp send error:", e, file=sys.stderr)
         return False
+
+
+def _parse_preferred_date(val) -> Optional[str]:
+    """Retorna YYYY-MM-DD ou None."""
+    if val is None or (isinstance(val, str) and not val.strip()):
+        return None
+    s = (val or "").strip()[:10]
+    if len(s) == 10 and s[4] == "-" and s[7] == "-":
+        return s
+    return None
+
+
+def _parse_preferred_month(val) -> Optional[str]:
+    """Retorna YYYY-MM ou None."""
+    if val is None or (isinstance(val, str) and not val.strip()):
+        return None
+    s = (val or "").strip()[:7]
+    if len(s) == 7 and s[4] == "-":
+        return s
+    return None
 
 
 @app.route("/api/alert-subscriptions", methods=["GET"])
@@ -472,7 +485,7 @@ def api_alert_subscriptions_list():
     try:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
-                "SELECT id, phone, origin, destination, active, created_at FROM alert_subscriptions WHERE phone = %s AND active = true ORDER BY created_at DESC",
+                "SELECT id, phone, origin, destination, preferred_date, preferred_month, active, created_at FROM alert_subscriptions WHERE phone = %s AND active = true ORDER BY created_at DESC",
                 (phone,),
             )
             rows = cur.fetchall()
@@ -483,11 +496,15 @@ def api_alert_subscriptions_list():
 
 @app.route("/api/alert-subscriptions", methods=["POST"])
 def api_alert_subscriptions_create():
-    """Cadastra alerta WhatsApp: body JSON { phone, origin, destination }."""
+    """Cadastra alerta WhatsApp: body JSON { phone, origin, destination, preferred_date?, preferred_month? }."""
     data = request.get_json() or {}
     phone = _normalize_phone(data.get("phone"))
     origin = (data.get("origin") or "").strip().upper()[:10] or None
     destination = (data.get("destination") or "").strip().upper()[:10] or None
+    preferred_date = _parse_preferred_date(data.get("preferred_date"))
+    preferred_month = _parse_preferred_month(data.get("preferred_month"))
+    if preferred_date and preferred_month:
+        preferred_month = None
     if not phone or not origin or not destination:
         return jsonify({"error": "Preencha phone, origin e destination"}), 400
     conn = psycopg2.connect(**main.DB_CONFIG)
@@ -495,26 +512,40 @@ def api_alert_subscriptions_create():
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             try:
                 cur.execute(
-                    "INSERT INTO alert_subscriptions (phone, origin, destination) VALUES (%s, %s, %s) ON CONFLICT (phone, origin, destination) DO UPDATE SET active = true RETURNING id, phone, origin, destination, active, created_at",
-                    (phone, origin, destination),
+                    """INSERT INTO alert_subscriptions (phone, origin, destination, preferred_date, preferred_month)
+                       VALUES (%s, %s, %s, %s, %s)
+                       ON CONFLICT (phone, origin, destination) DO UPDATE SET
+                         active = true, preferred_date = EXCLUDED.preferred_date, preferred_month = EXCLUDED.preferred_month
+                       RETURNING id, phone, origin, destination, preferred_date, preferred_month, active, created_at""",
+                    (phone, origin, destination, preferred_date, preferred_month),
                 )
                 row = cur.fetchone()
                 conn.commit()
             except psycopg2.IntegrityError:
                 conn.rollback()
                 cur.execute(
-                    "SELECT id, phone, origin, destination, active, created_at FROM alert_subscriptions WHERE phone = %s AND origin = %s AND destination = %s",
+                    "SELECT id, phone, origin, destination, preferred_date, preferred_month, active, created_at FROM alert_subscriptions WHERE phone = %s AND origin = %s AND destination = %s",
                     (phone, origin, destination),
                 )
                 row = cur.fetchone()
                 if row:
-                    cur.execute("UPDATE alert_subscriptions SET active = true WHERE id = %s", (row["id"],))
+                    cur.execute(
+                        "UPDATE alert_subscriptions SET active = true, preferred_date = %s, preferred_month = %s WHERE id = %s",
+                        (preferred_date, preferred_month, row["id"]),
+                    )
                     conn.commit()
+                    row = dict(row)
+                    row["preferred_date"] = preferred_date
+                    row["preferred_month"] = preferred_month
         if not row:
             return jsonify({"error": "Falha ao salvar inscrição"}), 500
         out = dict(row)
-        # Mensagem de confirmação por WhatsApp (se Twilio configurado)
-        msg = f"Voa Lá: Você se inscreveu para alertas de passagens {origin} → {destination}. Enviaremos ofertas por aqui."
+        period = ""
+        if preferred_date:
+            period = f" na data {preferred_date}"
+        elif preferred_month:
+            period = f" no mês {preferred_month}"
+        msg = f"Voa Lá: Você se inscreveu para alertas {origin} → {destination}{period}. Enviaremos ofertas por aqui."
         if _send_whatsapp(phone, msg):
             out["whatsapp_sent"] = True
         return jsonify(_serialize(out)), 201
@@ -535,6 +566,68 @@ def api_alert_subscriptions_delete(sub_id):
         return jsonify({"ok": True})
     finally:
         conn.close()
+
+
+# ---------- Admin (requer X-Admin-Token = ADMIN_TOKEN) ----------
+def _require_admin():
+    token = request.headers.get("X-Admin-Token") or request.args.get("admin_token")
+    expected = os.environ.get("ADMIN_TOKEN")
+    if not expected or token != expected:
+        return jsonify({"error": "Acesso negado"}), 403
+    return None
+
+
+@app.route("/api/admin/alert-subscriptions", methods=["GET"])
+def api_admin_alert_subscriptions_list():
+    """Lista todas as inscrições (admin). Query: ?active_only=1&phone=&origin=&destination="""
+    err = _require_admin()
+    if err:
+        return err
+    active_only = request.args.get("active_only", "").strip() in ("1", "true", "yes")
+    phone = (request.args.get("phone") or "").strip() or None
+    origin = (request.args.get("origin") or "").strip().upper() or None
+    destination = (request.args.get("destination") or "").strip().upper() or None
+    conn = psycopg2.connect(**main.DB_CONFIG)
+    try:
+        where = ["1=1"]
+        params = []
+        if active_only:
+            where.append("active = true")
+        if phone:
+            where.append("phone = %s")
+            params.append(_normalize_phone(phone) or phone)
+        if origin:
+            where.append("origin = %s")
+            params.append(origin)
+        if destination:
+            where.append("destination = %s")
+            params.append(destination)
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, phone, origin, destination, preferred_date, preferred_month, active, created_at FROM alert_subscriptions WHERE "
+                + " AND ".join(where) + " ORDER BY created_at DESC",
+                tuple(params),
+            )
+            rows = cur.fetchall()
+        return jsonify(_serialize([dict(r) for r in rows]))
+    finally:
+        conn.close()
+
+
+@app.route("/api/admin/send-alerts", methods=["POST"])
+def api_admin_send_alerts():
+    """Dispara o motor de envio (respeitando data/mês preferido de cada inscrição)."""
+    err = _require_admin()
+    if err:
+        return err
+    days_recent = int(os.environ.get("ALERTS_DAYS_RECENT", "3"))
+    try:
+        from alerts_engine import run_send_alerts
+        sent = run_send_alerts(main.DB_CONFIG, days_recent=days_recent, send_func=_send_whatsapp)
+        return jsonify({"sent": sent, "message": f"Enviados {sent} alertas."})
+    except Exception as e:
+        print(">>> [web_app] send-alerts error:", e, file=sys.stderr)
+        return jsonify({"error": str(e), "sent": 0}), 500
 
 
 @app.route("/")
