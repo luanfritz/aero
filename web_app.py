@@ -435,6 +435,108 @@ def api_opportunities():
         return jsonify({"error": str(e)}), 500
 
 
+# ---------- Alertas WhatsApp ----------
+def _normalize_phone(phone):
+    """Remove tudo que não for dígito; garante código do país (55 Brasil) se tiver 10-11 dígitos."""
+    digits = "".join(c for c in (phone or "") if c.isdigit())
+    if len(digits) == 10 or len(digits) == 11:
+        digits = "55" + digits
+    return digits or None
+
+
+def _send_whatsapp(to_phone: str, body: str) -> bool:
+    """Envia mensagem WhatsApp via Twilio. Retorna True se enviou. Requer TWILIO_* no ambiente."""
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+    from_whatsapp = os.environ.get("TWILIO_WHATSAPP_FROM")  # ex: whatsapp:+14155238886
+    if not all([account_sid, auth_token, from_whatsapp]):
+        return False
+    try:
+        from twilio.rest import Client
+        client = Client(account_sid, auth_token)
+        to = to_phone if to_phone.startswith("whatsapp:") else f"whatsapp:+{to_phone}"
+        client.messages.create(body=body, from_=from_whatsapp, to=to)
+        return True
+    except Exception as e:
+        print(">>> [web_app] WhatsApp send error:", e, file=sys.stderr)
+        return False
+
+
+@app.route("/api/alert-subscriptions", methods=["GET"])
+def api_alert_subscriptions_list():
+    """Lista inscrições por telefone. Query: ?phone=5511999999999"""
+    phone = _normalize_phone(request.args.get("phone"))
+    if not phone:
+        return jsonify({"error": "Parâmetro phone é obrigatório"}), 400
+    conn = psycopg2.connect(**main.DB_CONFIG)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                "SELECT id, phone, origin, destination, active, created_at FROM alert_subscriptions WHERE phone = %s AND active = true ORDER BY created_at DESC",
+                (phone,),
+            )
+            rows = cur.fetchall()
+        return jsonify(_serialize([dict(r) for r in rows]))
+    finally:
+        conn.close()
+
+
+@app.route("/api/alert-subscriptions", methods=["POST"])
+def api_alert_subscriptions_create():
+    """Cadastra alerta WhatsApp: body JSON { phone, origin, destination }."""
+    data = request.get_json() or {}
+    phone = _normalize_phone(data.get("phone"))
+    origin = (data.get("origin") or "").strip().upper()[:10] or None
+    destination = (data.get("destination") or "").strip().upper()[:10] or None
+    if not phone or not origin or not destination:
+        return jsonify({"error": "Preencha phone, origin e destination"}), 400
+    conn = psycopg2.connect(**main.DB_CONFIG)
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            try:
+                cur.execute(
+                    "INSERT INTO alert_subscriptions (phone, origin, destination) VALUES (%s, %s, %s) ON CONFLICT (phone, origin, destination) DO UPDATE SET active = true RETURNING id, phone, origin, destination, active, created_at",
+                    (phone, origin, destination),
+                )
+                row = cur.fetchone()
+                conn.commit()
+            except psycopg2.IntegrityError:
+                conn.rollback()
+                cur.execute(
+                    "SELECT id, phone, origin, destination, active, created_at FROM alert_subscriptions WHERE phone = %s AND origin = %s AND destination = %s",
+                    (phone, origin, destination),
+                )
+                row = cur.fetchone()
+                if row:
+                    cur.execute("UPDATE alert_subscriptions SET active = true WHERE id = %s", (row["id"],))
+                    conn.commit()
+        if not row:
+            return jsonify({"error": "Falha ao salvar inscrição"}), 500
+        out = dict(row)
+        # Mensagem de confirmação por WhatsApp (se Twilio configurado)
+        msg = f"Voa Lá: Você se inscreveu para alertas de passagens {origin} → {destination}. Enviaremos ofertas por aqui."
+        if _send_whatsapp(phone, msg):
+            out["whatsapp_sent"] = True
+        return jsonify(_serialize(out)), 201
+    finally:
+        conn.close()
+
+
+@app.route("/api/alert-subscriptions/<int:sub_id>", methods=["DELETE"])
+def api_alert_subscriptions_delete(sub_id):
+    """Desativa uma inscrição (soft delete)."""
+    conn = psycopg2.connect(**main.DB_CONFIG)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE alert_subscriptions SET active = false WHERE id = %s", (sub_id,))
+            conn.commit()
+            if cur.rowcount == 0:
+                return jsonify({"error": "Inscrição não encontrada"}), 404
+        return jsonify({"ok": True})
+    finally:
+        conn.close()
+
+
 @app.route("/")
 def index():
     if _HAS_BUILD:
@@ -450,9 +552,15 @@ def favicon():
 
 @app.route("/<path:path>")
 def static_files(path):
-    if _HAS_BUILD:
+    if not _HAS_BUILD:
+        return Response(_HTML_BUILD_FIRST, mimetype="text/html; charset=utf-8")
+    # SPA: rotas como /alertas não são arquivos; servir index.html para o React Router
+    if not path or "." not in path.split("/")[-1]:
+        return send_from_directory(app.static_folder, "index.html")
+    try:
         return send_from_directory(app.static_folder, path)
-    return Response(_HTML_BUILD_FIRST, mimetype="text/html; charset=utf-8")
+    except Exception:
+        return send_from_directory(app.static_folder, "index.html")
 
 
 if __name__ == "__main__":

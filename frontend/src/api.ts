@@ -63,3 +63,46 @@ export async function fetchOriginsDestinations(): Promise<OriginsDestinationsRes
     labels: data.labels || {},
   }
 }
+
+// ---------- Alertas WhatsApp ----------
+export interface AlertSubscription {
+  id: number
+  phone: string
+  origin: string
+  destination: string
+  active: boolean
+  created_at: string
+  whatsapp_sent?: boolean
+}
+
+export async function createAlertSubscription(body: {
+  phone: string
+  origin: string
+  destination: string
+}): Promise<AlertSubscription> {
+  const res = await fetch(`${API}/alert-subscriptions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json()
+  if (data?.error) throw new Error(data.error)
+  if (!res.ok) throw new Error(data?.error || `${res.status}`)
+  return data as AlertSubscription
+}
+
+export async function fetchAlertSubscriptions(phone: string): Promise<AlertSubscription[]> {
+  const res = await fetch(`${API}/alert-subscriptions?phone=${encodeURIComponent(phone)}`)
+  if (!res.ok) throw new Error(`${res.status}`)
+  const data = await res.json()
+  if (data?.error) throw new Error(data.error)
+  return Array.isArray(data) ? data : []
+}
+
+export async function deleteAlertSubscription(id: number): Promise<void> {
+  const res = await fetch(`${API}/alert-subscriptions/${id}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(data?.error || `${res.status}`)
+  }
+}

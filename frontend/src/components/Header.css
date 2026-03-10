@@ -12,6 +12,26 @@
   display: flex;
   justify-content: center;
   align-items: center;
+  gap: var(--space-xl);
+}
+
+.header-nav {
+  margin-left: auto;
+}
+
+.header-link {
+  font-size: var(--text-body);
+  font-weight: 500;
+  color: var(--link);
+  text-decoration: none;
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-sm);
+  transition: background 0.2s, color 0.2s;
+}
+
+.header-link:hover {
+  background: var(--accent-dim);
+  color: var(--accent-hover);
 }
 
 .header-brand {
